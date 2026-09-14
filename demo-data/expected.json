@@ -1,0 +1,61 @@
+{
+  "orders_rows": 1002,
+  "payments_rows": 1001,
+  "summary": {
+    "MATCHED": 989,
+    "MISSING_PAYMENT": 6,
+    "ORPHAN_PAYMENT": 5,
+    "AMOUNT_MISMATCH": 3,
+    "CURRENCY_MISMATCH": 2,
+    "DUPLICATE_PAYMENT": 2,
+    "DUPLICATE_ORDER": 2,
+    "FALLBACK_MATCHED": 0,
+    "INVALID_ROW": 0
+  },
+  "planted": {
+    "missing_payment": [
+      "ORD-2024-00055",
+      "ORD-2024-00090",
+      "ORD-2024-00297",
+      "ORD-2024-00517",
+      "ORD-2024-00610",
+      "ORD-2024-00845"
+    ],
+    "amount_mismatch": [
+      "ORD-2024-00271",
+      "ORD-2024-00776",
+      "ORD-2024-00964"
+    ],
+    "currency_mismatch": [
+      "ORD-2024-00048",
+      "ORD-2024-00640"
+    ],
+    "duplicate_payment": [
+      "ORD-2024-00354",
+      "ORD-2024-00529"
+    ],
+    "duplicate_order": [
+      "ORD-2024-00402",
+      "ORD-2024-00713"
+    ],
+    "orphan_payment": [
+      "ORD-2024-90000",
+      "ORD-2024-90001",
+      "ORD-2024-90002",
+      "ORD-2024-90003",
+      "ORD-2024-90004"
+    ]
+  },
+  "orders_mapping": {
+    "reference": "Order ID",
+    "amount": "Amount",
+    "currency": "Currency",
+    "date": "Date"
+  },
+  "payments_mapping": {
+    "reference": "merchant_reference",
+    "amount": "amount",
+    "currency": "currency",
+    "date": "payment_date"
+  }
+}
