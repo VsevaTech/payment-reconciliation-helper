@@ -10,6 +10,7 @@ on:
     paths:
       - demo-data/generate.py
       - .github/workflows/sync-demo-data.yml
+      - .gitattributes
   workflow_dispatch:
 
 permissions:
