@@ -1,0 +1,3 @@
+# Generated PSP export deliberately uses CRLF; never normalise it.
+demo-data/payments.csv -text
+* text=auto eol=lf
