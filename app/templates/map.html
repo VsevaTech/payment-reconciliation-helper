@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Map columns · Payment Reconciliation Helper{% endblock %}
+{% macro select(name, columns, guess, required) -%}
+<select name="{{ name }}" {% if required %}required{% endif %}>
+  <option value="">{% if required %}— select —{% else %}— not used —{% endif %}</option>
+  {% for c in columns %}<option value="{{ c }}" {% if c == guess %}selected{% endif %}>{{ c }}</option>{% endfor %}
+</select>
+{%- endmacro %}
+{% macro preview(loaded) -%}
+<p class="muted">{{ loaded.filename }} · {{ loaded.row_count }} rows · encoding <code>{{ loaded.encoding }}</code> · delimiter <code>{{ loaded.delimiter | replace("\t", "TAB") }}</code>
+{% for w in loaded.warnings %}· {{ w }}{% endfor %}</p>
+<div class="scroll" style="max-height:260px">
+<table>
+  <thead><tr>{% for c in loaded.columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+  <tbody>{% for r in loaded.preview(8) %}<tr>{% for c in loaded.columns %}<td>{{ r[c] }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+</table>
+</div>
+{%- endmacro %}
+{% block content %}
+<form method="post" action="/s/{{ session.id }}/reconcile">
+<div class="grid">
+  <div class="card">
+    <h1>Orders</h1>
+    {{ preview(session.orders) }}
+    <label>Order ID → <code>merchant_reference</code> *</label>{{ select("orders_reference", session.orders.columns, orders_guess.reference, true) }}
+    <label>Amount → <code>amount</code> *</label>{{ select("orders_amount", session.orders.columns, orders_guess.amount, true) }}
+    <label>Currency → <code>currency</code></label>{{ select("orders_currency", session.orders.columns, orders_guess.currency, false) }}
+    <label>Date → <code>payment_date</code></label>{{ select("orders_date", session.orders.columns, orders_guess.date, false) }}
+  </div>
+  <div class="card">
+    <h1>Payments</h1>
+    {{ preview(session.payments) }}
+    <label><code>merchant_reference</code> *</label>{{ select("payments_reference", session.payments.columns, payments_guess.reference, true) }}
+    <label><code>amount</code> *</label>{{ select("payments_amount", session.payments.columns, payments_guess.amount, true) }}
+    <label><code>currency</code></label>{{ select("payments_currency", session.payments.columns, payments_guess.currency, false) }}
+    <label><code>payment_date</code></label>{{ select("payments_date", session.payments.columns, payments_guess.date, false) }}
+  </div>
+</div>
+<div class="card">
+  <h2>Options</h2>
+  <div class="row">
+    <div><label for="tolerance">Amount tolerance (absolute, same currency)</label>
+      <input id="tolerance" type="text" name="tolerance" value="0" inputmode="decimal"></div>
+    <div><label>&nbsp;</label><label style="font-weight:400"><input type="checkbox" name="case_insensitive"> Case-insensitive reference match</label></div>
+    <div><label>&nbsp;</label><label style="font-weight:400"><input type="checkbox" name="fallback"> Optional fallback: pair MISSING/ORPHAN rows by amount + currency + date</label></div>
+    <div><label for="window_days">Fallback date window (days)</label>
+      <input id="window_days" type="number" name="window_days" value="3" min="0" max="365"></div>
+  </div>
+  <p><button type="submit">Run reconciliation</button> <a class="btn secondary" href="/">Start over</a></p>
+</div>
+</form>
+{% endblock %}

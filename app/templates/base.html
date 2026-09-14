@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Payment Reconciliation Helper{% endblock %}</title>
+<script src="https://unpkg.com/htmx.org@1.9.12" crossorigin="anonymous"></script>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1c1f24; --muted:#6b7280; --line:#e3e6ea; --accent:#0f5fd1;
+          --ok:#1b7f4b; --bad:#b42323; --warn:#a05a00; --dup:#5b3fa8; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; color:var(--ink); background:var(--bg); }
+  header { background:#fff; border-bottom:1px solid var(--line); padding:12px 24px; display:flex; gap:16px; align-items:baseline; }
+  header a { color:var(--ink); text-decoration:none; font-weight:600; }
+  header small { color:var(--muted); }
+  main { max-width:1200px; margin:24px auto; padding:0 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:20px; margin-bottom:20px; }
+  h1 { font-size:20px; margin:0 0 12px; } h2 { font-size:16px; margin:0 0 10px; }
+  .grid { display:grid; gap:20px; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); }
+  label { display:block; font-weight:600; margin:10px 0 4px; }
+  input[type=file], select, input[type=text], input[type=number] { width:100%; padding:7px 9px; border:1px solid var(--line); border-radius:6px; background:#fff; font:inherit; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+  .row > * { flex:1 1 180px; }
+  button, .btn { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:9px 16px; font:inherit; font-weight:600; cursor:pointer; text-decoration:none; display:inline-block; }
+  .btn.secondary { background:#fff; color:var(--ink); border:1px solid var(--line); }
+  .error { background:#fde7e9; color:var(--bad); border:1px solid #f5b5bb; padding:10px 12px; border-radius:6px; margin-bottom:16px; }
+  .muted { color:var(--muted); }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; white-space:nowrap; }
+  td.wrap { white-space:normal; }
+  th { background:#fafbfc; position:sticky; top:0; }
+  .scroll { overflow:auto; max-height:70vh; border:1px solid var(--line); border-radius:6px; }
+  .num { text-align:right; font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
+  .pill.MATCHED, .pill.FALLBACK_MATCHED { background:#e6f4ea; color:var(--ok); }
+  .pill.MISSING_PAYMENT, .pill.ORPHAN_PAYMENT { background:#fde7e9; color:var(--bad); }
+  .pill.AMOUNT_MISMATCH, .pill.CURRENCY_MISMATCH { background:#fff4ce; color:var(--warn); }
+  .pill.DUPLICATE_PAYMENT, .pill.DUPLICATE_ORDER { background:#e8e0f7; color:var(--dup); }
+  .pill.INVALID_ROW { background:#eee; color:#444; }
+  .tiles { display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); }
+  .tile { border:1px solid var(--line); border-radius:8px; padding:10px 12px; background:#fff; text-decoration:none; color:inherit; }
+  .tile.active { outline:2px solid var(--accent); }
+  .tile .n { font-size:22px; font-weight:700; }
+  .tile .k { font-size:12px; color:var(--muted); }
+  code { background:#f0f2f5; padding:1px 5px; border-radius:4px; }
+</style>
+</head>
+<body>
+<header>
+  <a href="/">Payment Reconciliation Helper</a>
+  <small>v{{ version }}</small>
+</header>
+<main>
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

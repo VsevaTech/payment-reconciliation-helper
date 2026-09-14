@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Result · Payment Reconciliation Helper{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Summary</h1>
+  <p class="muted">Orders: {{ result.orders_total }} rows ({{ session.orders.filename }}) · Payments: {{ result.payments_total }} rows ({{ session.payments.filename }})
+    · tolerance {{ result.options.amount_tolerance }} · fallback {{ "on" if result.options.enable_fallback_matching else "off" }}</p>
+  <div class="tiles">
+    <a class="tile {% if active_category == '' %}active{% endif %}" href="/s/{{ session.id }}/result"
+       hx-get="/s/{{ session.id }}/result" hx-target="#table" hx-push-url="true">
+      <div class="n">{{ result.exceptions | length }}</div><div class="k">ALL EXCEPTIONS</div></a>
+    {% for c in categories %}
+    <a class="tile {% if active_category == c %}active{% endif %}" href="/s/{{ session.id }}/result?category={{ c }}"
+       hx-get="/s/{{ session.id }}/result?category={{ c }}" hx-target="#table" hx-push-url="true">
+      <div class="n">{{ summary[c] }}</div><div class="k"><span class="pill {{ c }}">{{ c }}</span></div></a>
+    {% endfor %}
+  </div>
+  <p style="margin-top:16px">
+    <a class="btn" href="/s/{{ session.id }}/export.xlsx?scope=all">Export XLSX</a>
+    <a class="btn secondary" href="/s/{{ session.id }}/export.csv?scope=exceptions">Export exceptions CSV</a>
+    <a class="btn secondary" href="/s/{{ session.id }}/export.csv?scope=all">Export all rows CSV</a>
+    <a class="btn secondary" href="/s/{{ session.id }}/map">← Change mapping</a>
+    <a class="btn secondary" href="/">New files</a>
+  </p>
+</div>
+<div class="card" id="table">
+  {% include "_exceptions_table.html" %}
+</div>
+{% endblock %}

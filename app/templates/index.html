@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h1>Upload files</h1>
+  <p class="muted">Two CSV files: your internal orders export and the PSP / acquirer payments export.
+     Delimiter and encoding are detected automatically; amounts are handled as exact decimals.</p>
+  <form method="post" action="/upload" enctype="multipart/form-data">
+    <div class="grid">
+      <div>
+        <label for="orders">Orders CSV (internal system)</label>
+        <input id="orders" type="file" name="orders" accept=".csv,.txt,text/csv" required>
+      </div>
+      <div>
+        <label for="payments">Payments CSV (PSP / acquirer)</label>
+        <input id="payments" type="file" name="payments" accept=".csv,.txt,text/csv" required>
+      </div>
+    </div>
+    <p><button type="submit">Continue to column mapping →</button></p>
+  </form>
+</div>
+<div class="card">
+  <h2>How it works</h2>
+  <ol class="muted">
+    <li>Upload <code>orders.csv</code> and <code>payments.csv</code>.</li>
+    <li>Map <code>Order ID → merchant_reference</code>, <code>Amount → amount</code>,
+        <code>Currency → currency</code>, <code>Date → payment_date</code> (suggested automatically).</li>
+    <li>Run reconciliation: exact match by reference, then amount and currency comparison, duplicate detection.</li>
+    <li>Review the summary and the exceptions table; export CSV or XLSX.</li>
+  </ol>
+</div>
+{% endblock %}

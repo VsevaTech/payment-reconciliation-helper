@@ -1,0 +1,31 @@
+<h2>{% if active_category %}{{ active_category }}{% else %}Exceptions{% endif %}
+  <span class="muted" style="font-weight:400">— {{ rows_total }} rows{% if rows_total > rows|length %}, showing first {{ rows|length }} (export for the full list){% endif %}</span></h2>
+{% if rows %}
+<div class="scroll">
+<table>
+  <thead><tr>
+    <th>Category</th><th>Reference</th><th class="num">Order row</th><th class="num">Payment row</th>
+    <th class="num">Order amount</th><th class="num">Payment amount</th><th class="num">Diff</th>
+    <th>Order ccy</th><th>Payment ccy</th><th>Order date</th><th>Payment date</th><th>Explanation</th>
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr>
+    <td><span class="pill {{ r.category.value }}">{{ r.category.value }}</span></td>
+    <td>{{ r.reference }}</td>
+    <td class="num">{{ r.order_row if r.order_row is not none else "" }}</td>
+    <td class="num">{{ r.payment_row if r.payment_row is not none else "" }}</td>
+    <td class="num">{{ r.order_amount if r.order_amount is not none else "" }}</td>
+    <td class="num">{{ r.payment_amount if r.payment_amount is not none else "" }}</td>
+    <td class="num">{{ r.difference if r.difference is not none else "" }}</td>
+    <td>{{ r.order_currency }}</td><td>{{ r.payment_currency }}</td>
+    <td>{{ r.order_date }}</td><td>{{ r.payment_date }}</td>
+    <td class="wrap">{{ r.explanation }}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="muted">No rows in this category.</p>
+{% endif %}
