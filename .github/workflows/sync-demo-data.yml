@@ -1,0 +1,41 @@
+name: Sync demo dataset
+
+# demo-data/*.csv and expected.json are derived from demo-data/generate.py
+# (fixed seed). This workflow keeps the committed copies in sync with the
+# generator so the repository always ships a ready-to-upload dataset.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - demo-data/generate.py
+      - .github/workflows/sync-demo-data.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-demo-data
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python demo-data/generate.py
+      - name: Commit regenerated dataset if it changed
+        run: |
+          git add demo-data
+          if git diff --cached --quiet; then
+            echo "demo dataset already in sync"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(demo-data): sync generated dataset with generate.py"
+          git push

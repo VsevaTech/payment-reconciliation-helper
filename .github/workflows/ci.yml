@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-test:
+    name: ruff + pytest (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: ruff format --check .
+      - name: Committed demo dataset is in sync with its generator
+        run: |
+          python demo-data/generate.py > /dev/null
+          git diff --exit-code -- demo-data
+      - run: pytest
+      - name: Demo dataset yields the planted discrepancies
+        run: |
+          python -m app.cli demo-data/orders.csv demo-data/payments.csv --json > /tmp/summary.json
+          python - <<'EOF'
+          import json
+          got = json.load(open("/tmp/summary.json"))
+          exp = json.load(open("demo-data/expected.json"))["summary"]
+          assert got == exp, (got, exp)
+          print("demo dataset OK:", got)
+          EOF
+
+  docker:
+    name: docker build + smoke test
+    runs-on: ubuntu-latest
+    needs: lint-test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure demo dataset is present for the smoke test
+        run: test -f demo-data/payments.csv || python3 demo-data/generate.py
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: payment-reconciliation-helper:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Run container and reconcile demo data through the HTTP API
+        run: |
+          docker run -d --name prh -p 8000:8000 payment-reconciliation-helper:ci
+          for i in $(seq 1 30); do
+            curl -fs http://127.0.0.1:8000/health && break
+            sleep 1
+          done
+          curl -fs http://127.0.0.1:8000/health
+          curl -fs -o /tmp/api.json http://127.0.0.1:8000/api/reconcile \
+            -F orders=@demo-data/orders.csv -F payments=@demo-data/payments.csv \
+            -F orders_reference="Order ID" -F orders_amount=Amount \
+            -F orders_currency=Currency -F orders_date=Date \
+            -F payments_reference=merchant_reference -F payments_amount=amount \
+            -F payments_currency=currency -F payments_date=payment_date \
+            -F include_rows=false
+          python3 - <<'EOF'
+          import json
+          got = json.load(open("/tmp/api.json"))["summary"]
+          exp = json.load(open("demo-data/expected.json"))["summary"]
+          assert got == exp, (got, exp)
+          print("container API OK:", got)
+          EOF
+          docker logs prh
+          docker rm -f prh
