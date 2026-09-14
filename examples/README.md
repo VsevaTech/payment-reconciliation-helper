@@ -19,5 +19,5 @@ Expected result:
 | DUPLICATE_PAYMENT   |     1 | TXN-6 (second capture of ORD-1007)                     |
 | DUPLICATE_ORDER     |     1 | second ORD-1006 row in orders                          |
 
-For a realistic volume (1000+ rows, planted errors, cp1252 payments export) see
-[`demo-data/`](../demo-data/).
+For a realistic volume (1000+ rows, planted errors, semicolon/CRLF PSP export, shuffled rows)
+see [`demo-data/`](../demo-data/).
