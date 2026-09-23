@@ -1,8 +1,12 @@
 """Deterministic synthetic dataset generator.
 
 Produces ``orders.csv`` (UTF-8, comma, ISO dates, amounts like ``1234.50``),
-``payments.csv`` (UTF-8, semicolon, CRLF, PSP-style columns, shuffled rows) and
-``expected.json`` with the exact category counts the engine must report.
+``payments.csv`` (UTF-8, semicolon, CRLF, PSP-style columns incl. a
+``transaction_type`` column, shuffled rows) and ``expected.json`` with the exact
+category counts and per-currency money totals the engine must report.
+
+The expectations are derived here from what was planted — independently of the
+engine — so the tests compare two separate computations.
 
 Run: ``python demo-data/generate.py`` (idempotent — fixed seed).
 """
@@ -25,6 +29,22 @@ N_CURRENCY_MISMATCH = 2
 N_DUP_PAYMENTS = 2
 N_DUP_ORDERS = 2
 N_ORPHANS = 5
+N_SPLIT = 4  # one of them is a three-way split
+N_PARTIAL = 2
+N_PARTIAL_REFUND = 3
+N_FULL_REFUND = 2
+N_VOIDED = 1
+
+# Hand-made, easy-to-read cases appended after the random orders (all 100.00 AED).
+SHOWCASE = {
+    "ORD-2024-01001": "MATCHED",  # 100 capture
+    "ORD-2024-01002": "MATCHED_SPLIT",  # 60 + 40
+    "ORD-2024-01003": "PARTIAL_PAYMENT",  # 60 + 35
+    "ORD-2024-01004": "PARTIALLY_REFUNDED",  # 100 capture, 30 refund
+    "ORD-2024-01005": "REFUNDED",  # 100 capture, 100 refund
+    "ORD-2024-01006": "POSSIBLE_DUPLICATE_CAPTURE",  # 100 + 100
+}
+ORPHAN_REFUND_REF = "ORD-2024-95000"
 
 CURRENCIES = ["AED"] * 70 + ["USD"] * 15 + ["SAR"] * 10 + ["EUR"] * 5
 CHANNELS = ["web", "app", "pos", "link"]
@@ -53,6 +73,14 @@ def money(rng: random.Random) -> Decimal:
     cents = rng.choice([0, 0, 0, 25, 50, 75, 99, 5, 10, 95, 49])
     whole = rng.choice([rng.randint(5, 199), rng.randint(200, 2500), rng.randint(2500, 15000)])
     return Decimal(whole) + Decimal(cents) / Decimal(100)
+
+
+CENT = Decimal("0.01")
+
+
+def split_amount(total: Decimal, ratio: str) -> tuple[Decimal, Decimal]:
+    first = (total * Decimal(ratio)).quantize(CENT)
+    return first, total - first
 
 
 def main() -> None:
@@ -88,46 +116,181 @@ def main() -> None:
     currency_mismatch = set(take(N_CURRENCY_MISMATCH))
     dup_payments = set(take(N_DUP_PAYMENTS))
     dup_orders = set(take(N_DUP_ORDERS))
+    split = sorted(take(N_SPLIT))
+    partial = set(take(N_PARTIAL))
+    partial_refund = set(take(N_PARTIAL_REFUND))
+    full_refund = set(take(N_FULL_REFUND))
+    voided = set(take(N_VOIDED))
+
+    for k, ref in enumerate(SHOWCASE):
+        orders.append(
+            {
+                "Order ID": ref,
+                "Customer": CUSTOMERS[k],
+                "Amount": "100.00",
+                "Currency": "AED",
+                "Date": (start + timedelta(days=20 + k)).isoformat(),
+                "Channel": "web",
+            }
+        )
+    by_ref = {o["Order ID"]: i for i, o in enumerate(orders)}
 
     payments: list[dict[str, str]] = []
     txn = 700000
+    # Independent expectations, accumulated while planting (Decimal only).
+    fin: dict[str, dict[str, Decimal]] = {}
+
+    def acc(currency: str, key: str, value: Decimal) -> None:
+        bucket = fin.setdefault(
+            currency,
+            {
+                k: Decimal("0")
+                for k in (
+                    "orders_count",
+                    "orders_total",
+                    "captured",
+                    "refunded",
+                    "voided",
+                    "unreconciled",
+                )
+            },
+        )
+        bucket[key] += value
 
     def psp_row(
-        o: dict[str, str], amount: str, currency: str, day_shift: int = 0
+        o: dict[str, str],
+        amount: Decimal,
+        currency: str,
+        day_shift: int = 0,
+        kind: str = "CAPTURE",
     ) -> dict[str, str]:
         nonlocal txn
         txn += rng.randint(1, 9)
         d = date.fromisoformat(o["Date"]) + timedelta(days=day_shift)
+        signed = -amount if kind == "REFUND" else amount
+        if kind == "CAPTURE":
+            acc(currency, "captured", amount)
+        elif kind == "REFUND":
+            acc(currency, "refunded", amount)
+        else:
+            acc(currency, "voided", amount)
         return {
             "psp_transaction_id": f"TXN{txn}",
             "merchant_reference": o["Order ID"],
-            "amount": amount,
+            "amount": format(signed, "f"),
             "currency": currency,
             "payment_date": d.isoformat(),
-            "status": "CAPTURED",
+            "status": {"CAPTURE": "CAPTURED", "REFUND": "REFUNDED", "VOID": "VOIDED"}[kind],
+            "transaction_type": kind,
             "card_brand": rng.choice(CARD_BRANDS),
             "merchant_name": rng.choice(CUSTOMERS),
         }
 
-    for i, o in enumerate(orders):
+    split_ratios = ["0.60", "0.25", "0.50", "0.30"]
+    refund_ratios = ["0.30", "0.10", "0.50"]
+    for i, o in enumerate(orders[:N_ORDERS]):
+        amount, currency = Decimal(o["Amount"]), o["Currency"]
+        acc(currency, "orders_total", amount)
+        acc(currency, "orders_count", Decimal(1))
         if i in missing:
+            acc(currency, "unreconciled", amount)
             continue
-        amount, currency = o["Amount"], o["Currency"]
+        if i in voided:
+            payments.append(psp_row(o, amount, currency, 0, "VOID"))
+            acc(currency, "unreconciled", amount)
+            continue
+        if i in split:
+            k = split.index(i)
+            a, rest = split_amount(amount, split_ratios[k])
+            if k == 0:  # three-way split
+                b, c = split_amount(rest, "0.50")
+                parts = [a, b, c]
+            else:
+                parts = [a, rest]
+            for n, part in enumerate(parts):
+                payments.append(psp_row(o, part, currency, n))
+            continue
+        if i in partial:
+            short = rng.choice([Decimal("0.50"), Decimal("1.00"), Decimal("5.00")])
+            a, b = split_amount(amount - short, "0.60")
+            payments.append(psp_row(o, a, currency, 0))
+            payments.append(psp_row(o, b, currency, 1))
+            acc(currency, "unreconciled", short)
+            continue
         if i in amount_mismatch:
             delta = rng.choice([Decimal("0.01"), Decimal("-0.10"), Decimal("10.00")])
-            amount = format(Decimal(amount) + delta, "f")
+            payments.append(psp_row(o, amount + delta, currency, rng.randint(0, 2)))
+            acc(currency, "unreconciled", abs(delta))
+            continue
         if i in currency_mismatch:
-            currency = "USD" if currency != "USD" else "AED"
+            pay_currency = "USD" if currency != "USD" else "AED"
+            payments.append(psp_row(o, amount, pay_currency, rng.randint(0, 2)))
+            acc(currency, "unreconciled", amount)
+            acc(pay_currency, "unreconciled", amount)
+            continue
         payments.append(psp_row(o, amount, currency, rng.randint(0, 2)))
         if i in dup_payments:
             payments.append(psp_row(o, amount, currency, rng.randint(0, 1)))
+            acc(currency, "unreconciled", amount)
+        elif i in partial_refund:
+            refund = (amount * Decimal(refund_ratios.pop(0))).quantize(CENT)
+            payments.append(psp_row(o, refund, currency, rng.randint(3, 10), "REFUND"))
+        elif i in full_refund:
+            payments.append(psp_row(o, amount, currency, rng.randint(3, 10), "REFUND"))
+
+    # Showcase orders: fixed, human-readable amounts.
+    h = Decimal("100.00")
+    show = {ref: orders[by_ref[ref]] for ref in SHOWCASE}
+    acc("AED", "orders_total", h * len(SHOWCASE))
+    acc("AED", "orders_count", Decimal(len(SHOWCASE)))
+    payments.append(psp_row(show["ORD-2024-01001"], h, "AED"))
+    payments.append(psp_row(show["ORD-2024-01002"], Decimal("60.00"), "AED"))
+    payments.append(psp_row(show["ORD-2024-01002"], Decimal("40.00"), "AED", 1))
+    payments.append(psp_row(show["ORD-2024-01003"], Decimal("60.00"), "AED"))
+    payments.append(psp_row(show["ORD-2024-01003"], Decimal("35.00"), "AED", 1))
+    acc("AED", "unreconciled", Decimal("5.00"))
+    payments.append(psp_row(show["ORD-2024-01004"], h, "AED"))
+    payments.append(psp_row(show["ORD-2024-01004"], Decimal("30.00"), "AED", 5, "REFUND"))
+    payments.append(psp_row(show["ORD-2024-01005"], h, "AED"))
+    payments.append(psp_row(show["ORD-2024-01005"], h, "AED", 6, "REFUND"))
+    payments.append(psp_row(show["ORD-2024-01006"], h, "AED"))
+    payments.append(psp_row(show["ORD-2024-01006"], h, "AED", 0))
+    acc("AED", "unreconciled", h)
+    showcase_expect = {
+        "ORD-2024-01001": {"captured": "100.00", "refunded": "0", "net": "100.00", "diff": "0.00"},
+        "ORD-2024-01002": {"captured": "100.00", "refunded": "0", "net": "100.00", "diff": "0.00"},
+        "ORD-2024-01003": {"captured": "95.00", "refunded": "0", "net": "95.00", "diff": "-5.00"},
+        "ORD-2024-01004": {
+            "captured": "100.00",
+            "refunded": "30.00",
+            "net": "70.00",
+            "diff": "0.00",
+        },
+        "ORD-2024-01005": {
+            "captured": "100.00",
+            "refunded": "100.00",
+            "net": "0.00",
+            "diff": "0.00",
+        },
+        "ORD-2024-01006": {
+            "captured": "200.00",
+            "refunded": "0",
+            "net": "200.00",
+            "diff": "100.00",
+        },
+    }
 
     for k in range(N_ORPHANS):
         fake = {
             "Order ID": f"ORD-2024-9{k:04d}",
             "Date": (start + timedelta(days=k * 3)).isoformat(),
         }
-        payments.append(psp_row(fake, format(money(rng), "f"), rng.choice(CURRENCIES)))
+        amount, currency = money(rng), rng.choice(CURRENCIES)
+        payments.append(psp_row(fake, amount, currency))
+        acc(currency, "unreconciled", amount)
+    fake = {"Order ID": ORPHAN_REFUND_REF, "Date": (start + timedelta(days=25)).isoformat()}
+    payments.append(psp_row(fake, Decimal("25.00"), "AED", 0, "REFUND"))
+    acc("AED", "unreconciled", Decimal("25.00"))
 
     for i in sorted(dup_orders):
         orders.append(dict(orders[i]))
@@ -150,33 +313,89 @@ def main() -> None:
     # text-safe in git; cp1252 / UTF-16 handling is covered by tests/test_csv_loader.py.
     (OUT / "payments.csv").write_bytes(pay_buf.getvalue().encode("utf-8"))
 
-    matched = N_ORDERS - N_MISSING - N_AMOUNT_MISMATCH - N_CURRENCY_MISMATCH
+    showcase_counts = {c: list(SHOWCASE.values()).count(c) for c in set(SHOWCASE.values())}
+    random_special = (
+        N_MISSING
+        + N_AMOUNT_MISMATCH
+        + N_CURRENCY_MISMATCH
+        + N_DUP_PAYMENTS
+        + N_SPLIT
+        + N_PARTIAL
+        + N_PARTIAL_REFUND
+        + N_FULL_REFUND
+        + N_VOIDED
+    )
+    summary = {
+        "MATCHED": N_ORDERS - random_special + showcase_counts["MATCHED"],
+        "MATCHED_SPLIT": N_SPLIT + showcase_counts["MATCHED_SPLIT"],
+        "PARTIALLY_REFUNDED": N_PARTIAL_REFUND + showcase_counts["PARTIALLY_REFUNDED"],
+        "REFUNDED": N_FULL_REFUND + showcase_counts["REFUNDED"],
+        "MISSING_PAYMENT": N_MISSING,
+        "ORPHAN_PAYMENT": N_ORPHANS + 1,
+        "AMOUNT_MISMATCH": N_AMOUNT_MISMATCH,
+        "PARTIAL_PAYMENT": N_PARTIAL + showcase_counts["PARTIAL_PAYMENT"],
+        "CURRENCY_MISMATCH": N_CURRENCY_MISMATCH,
+        "POSSIBLE_DUPLICATE_CAPTURE": N_DUP_PAYMENTS
+        + showcase_counts["POSSIBLE_DUPLICATE_CAPTURE"],
+        "REFUND_EXCEEDS_CAPTURE": 0,
+        "VOIDED": N_VOIDED,
+        "DUPLICATE_ORDER": N_DUP_ORDERS,
+        "FALLBACK_MATCHED": 0,
+        "INVALID_ROW": 0,
+    }
+    # Without the transaction_type column every row is a capture with its signed
+    # amount: refund groups contain a negative amount → AMOUNT_MISMATCH, and a
+    # lone VOID row "pays" its order → MATCHED. This is why the column matters.
+    refund_groups = summary["PARTIALLY_REFUNDED"] + summary["REFUNDED"]
+    untyped = dict(summary)
+    untyped["MATCHED"] += N_VOIDED
+    untyped["AMOUNT_MISMATCH"] += refund_groups
+    untyped["PARTIALLY_REFUNDED"] = untyped["REFUNDED"] = untyped["VOIDED"] = 0
+
+    def refs(indices: set[int] | list[int]) -> list[str]:
+        return sorted(orders[i]["Order ID"] for i in indices)
+
+    def showcase(category: str) -> list[str]:
+        return [r for r, c in SHOWCASE.items() if c == category]
+
     expected = {
         "orders_rows": len(orders),
         "payments_rows": len(payments),
-        "summary": {
-            "MATCHED": matched,
-            "MISSING_PAYMENT": N_MISSING,
-            "ORPHAN_PAYMENT": N_ORPHANS,
-            "AMOUNT_MISMATCH": N_AMOUNT_MISMATCH,
-            "CURRENCY_MISMATCH": N_CURRENCY_MISMATCH,
-            "DUPLICATE_PAYMENT": N_DUP_PAYMENTS,
-            "DUPLICATE_ORDER": N_DUP_ORDERS,
-            "FALLBACK_MATCHED": 0,
-            "INVALID_ROW": 0,
-        },
+        "summary": summary,
+        "summary_without_transaction_type": untyped,
+        "financials": [
+            {
+                "currency": c,
+                "orders_count": int(v["orders_count"]),
+                "orders_total": format(v["orders_total"], "f"),
+                "captured": format(v["captured"], "f"),
+                "refunded": format(v["refunded"], "f"),
+                "net_captured": format(v["captured"] - v["refunded"], "f"),
+                "voided": format(v["voided"], "f"),
+                "unreconciled": format(v["unreconciled"], "f"),
+            }
+            for c, v in sorted(fin.items())
+        ],
         "planted": {
-            "missing_payment": sorted(orders[i]["Order ID"] for i in missing),
-            "amount_mismatch": sorted(orders[i]["Order ID"] for i in amount_mismatch),
-            "currency_mismatch": sorted(orders[i]["Order ID"] for i in currency_mismatch),
-            "duplicate_payment": sorted(orders[i]["Order ID"] for i in dup_payments),
-            "duplicate_order": sorted(orders[i]["Order ID"] for i in dup_orders),
+            "missing_payment": refs(missing),
+            "amount_mismatch": refs(amount_mismatch),
+            "currency_mismatch": refs(currency_mismatch),
+            "possible_duplicate_capture": sorted(
+                refs(dup_payments) + showcase("POSSIBLE_DUPLICATE_CAPTURE")
+            ),
+            "duplicate_order": refs(dup_orders),
+            "matched_split": sorted(refs(split) + showcase("MATCHED_SPLIT")),
+            "partial_payment": sorted(refs(partial) + showcase("PARTIAL_PAYMENT")),
+            "partially_refunded": sorted(refs(partial_refund) + showcase("PARTIALLY_REFUNDED")),
+            "refunded": sorted(refs(full_refund) + showcase("REFUNDED")),
+            "voided": refs(voided),
             "orphan_payment": sorted(
                 p["merchant_reference"]
                 for p in payments
                 if p["merchant_reference"].startswith("ORD-2024-9")
             ),
         },
+        "showcase": {ref: {"category": SHOWCASE[ref], **showcase_expect[ref]} for ref in SHOWCASE},
         "orders_mapping": {
             "reference": "Order ID",
             "amount": "Amount",
@@ -188,6 +407,7 @@ def main() -> None:
             "amount": "amount",
             "currency": "currency",
             "date": "payment_date",
+            "transaction_type": "transaction_type",
         },
     }
     (OUT / "expected.json").write_text(
