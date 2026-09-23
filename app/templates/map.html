@@ -34,6 +34,10 @@
     <label><code>amount</code> *</label>{{ select("payments_amount", session.payments.columns, payments_guess.amount, true) }}
     <label><code>currency</code></label>{{ select("payments_currency", session.payments.columns, payments_guess.currency, false) }}
     <label><code>payment_date</code></label>{{ select("payments_date", session.payments.columns, payments_guess.date, false) }}
+    <label><code>transaction_type</code> <span class="muted" style="font-weight:400">(optional)</span></label>{{ select("payments_transaction_type", session.payments.columns, payments_guess.transaction_type, false) }}
+    <p class="muted" style="margin:6px 0 0">Values understood: <code>PAYMENT</code> (capture, sale, charge…),
+      <code>REFUND</code> (refunded, credit, return…), <code>VOID</code> (voided, cancel, reversal…).
+      Anything else is reported as <code>INVALID_ROW</code>. Leave “not used” to treat every row as a payment.</p>
   </div>
 </div>
 <div class="card">
