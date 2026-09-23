@@ -6,7 +6,7 @@ name: Sync demo dataset
 
 on:
   push:
-    branches: [main, "feat/split-refunds-financial-summary"]
+    branches: [main]
     paths:
       - demo-data/generate.py
       - .github/workflows/sync-demo-data.yml
