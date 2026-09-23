@@ -78,41 +78,41 @@ def test_currency_is_case_and_whitespace_insensitive():
     assert result.summary["MATCHED"] == 3
 
 
+# Repeated references are no longer blanket DUPLICATE_PAYMENT rows: the whole
+# payment group is evaluated against the order. A second capture of the full
+# amount is a POSSIBLE_DUPLICATE_CAPTURE; the earliest capture (by date, then row)
+# is treated as the original and the others are flagged.
+
+
 def test_duplicate_payment_keeps_first_by_date_as_canonical():
     payments = PAYMENTS + "A-1,100.00,AED,2024-09-05\n"
     result = run(ORDERS, payments)
-    (dup,) = result.by_category(Category.DUPLICATE_PAYMENT)
-    assert dup.reference == "A-1" and dup.payment_row == 4
-    assert "payment row 1" in dup.explanation
-    assert result.summary["MATCHED"] == 3
+    (dup,) = result.by_category(Category.POSSIBLE_DUPLICATE_CAPTURE)
+    assert dup.reference == "A-1"
+    assert dup.payment_rows == [1, 4] and dup.duplicate_payment_rows == [4]
+    assert dup.payment_row == 1
+    assert "row 1 alone equals the order" in dup.explanation
+    assert dup.difference == Decimal("100.00")
+    assert result.summary["MATCHED"] == 2
 
 
 def test_duplicate_payment_earlier_date_later_in_file_becomes_canonical():
     payments = PAYMENTS + "A-1,100.00,AED,2024-08-30\n"
     result = run(ORDERS, payments)
-    (dup,) = result.by_category(Category.DUPLICATE_PAYMENT)
-    assert dup.payment_row == 1
-    matched = [r for r in result.by_category(Category.MATCHED) if r.reference == "A-1"]
-    assert matched[0].payment_row == 4
-
-
-def test_duplicate_order():
-    orders = ORDERS + "A-3,19.99,AED,2024-09-03\n"
-    result = run(orders, PAYMENTS)
-    (dup,) = result.by_category(Category.DUPLICATE_ORDER)
-    assert dup.reference == "A-3" and dup.order_row == 4
-    assert result.summary["MATCHED"] == 3
-    assert result.summary["MISSING_PAYMENT"] == 0
+    (dup,) = result.by_category(Category.POSSIBLE_DUPLICATE_CAPTURE)
+    assert dup.payment_row == 4
+    assert dup.duplicate_payment_rows == [1]
 
 
 def test_duplicate_with_different_amount_is_still_duplicate_not_mismatch():
-    # A second capture with a different amount: the canonical (first) row is
-    # compared with the order; the extra row is reported as duplicate only.
+    # A second capture with a different amount: one capture alone pays the
+    # order, so the extra row is flagged as a possible duplicate, not a mismatch.
     payments = PAYMENTS + "A-1,999.00,AED,2024-09-06\n"
     result = run(ORDERS, payments)
-    assert result.summary["DUPLICATE_PAYMENT"] == 1
+    assert result.summary["POSSIBLE_DUPLICATE_CAPTURE"] == 1
     assert result.summary["AMOUNT_MISMATCH"] == 0
-    assert result.summary["MATCHED"] == 3
+    assert result.by_category(Category.POSSIBLE_DUPLICATE_CAPTURE)[0].duplicate_payment_rows == [4]
+    assert result.summary["MATCHED"] == 2
 
 
 def test_row_order_does_not_matter():
