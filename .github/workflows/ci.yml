@@ -30,15 +30,23 @@ jobs:
           python demo-data/generate.py > /dev/null
           git diff --exit-code -- demo-data
       - run: pytest
-      - name: Demo dataset yields the planted discrepancies
+      - name: Demo dataset yields the planted discrepancies (CLI)
         run: |
+          # typed run: split / partial / refunds / voids / duplicate captures + per-currency money
+          python -m app.cli demo-data/orders.csv demo-data/payments.csv --json-full > /tmp/typed.json
+          python demo-data/verify.py /tmp/typed.json
+          # legacy run: transaction_type ignored, every row is a capture
+          python -m app.cli demo-data/orders.csv demo-data/payments.csv --json-full \
+            --no-transaction-type > /tmp/untyped.json
+          python demo-data/verify.py /tmp/untyped.json --without-transaction-type
+          # --json keeps its old shape: the category summary only
           python -m app.cli demo-data/orders.csv demo-data/payments.csv --json > /tmp/summary.json
           python - <<'EOF'
           import json
           got = json.load(open("/tmp/summary.json"))
           exp = json.load(open("demo-data/expected.json"))["summary"]
           assert got == exp, (got, exp)
-          print("demo dataset OK:", got)
+          print("CLI --json summary OK")
           EOF
 
   docker:
@@ -72,13 +80,14 @@ jobs:
             -F orders_currency=Currency -F orders_date=Date \
             -F payments_reference=merchant_reference -F payments_amount=amount \
             -F payments_currency=currency -F payments_date=payment_date \
-            -F include_rows=false
-          python3 - <<'EOF'
-          import json
-          got = json.load(open("/tmp/api.json"))["summary"]
-          exp = json.load(open("demo-data/expected.json"))["summary"]
-          assert got == exp, (got, exp)
-          print("container API OK:", got)
-          EOF
+            -F payments_transaction_type=transaction_type -F include_rows=true
+          python3 demo-data/verify.py /tmp/api.json
+          curl -fs -o /tmp/api-untyped.json http://127.0.0.1:8000/api/reconcile \
+            -F orders=@demo-data/orders.csv -F payments=@demo-data/payments.csv \
+            -F orders_reference="Order ID" -F orders_amount=Amount \
+            -F orders_currency=Currency -F orders_date=Date \
+            -F payments_reference=merchant_reference -F payments_amount=amount \
+            -F payments_currency=currency -F payments_date=payment_date -F include_rows=true
+          python3 demo-data/verify.py /tmp/api-untyped.json --without-transaction-type
           docker logs prh
           docker rm -f prh

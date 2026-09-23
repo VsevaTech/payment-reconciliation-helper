@@ -1,17 +1,82 @@
 {
-  "orders_rows": 1002,
-  "payments_rows": 1001,
+  "orders_rows": 1008,
+  "payments_rows": 1025,
   "summary": {
-    "MATCHED": 989,
+    "MATCHED": 976,
+    "MATCHED_SPLIT": 5,
+    "PARTIALLY_REFUNDED": 4,
+    "REFUNDED": 3,
     "MISSING_PAYMENT": 6,
-    "ORPHAN_PAYMENT": 5,
+    "ORPHAN_PAYMENT": 6,
     "AMOUNT_MISMATCH": 3,
+    "PARTIAL_PAYMENT": 3,
     "CURRENCY_MISMATCH": 2,
-    "DUPLICATE_PAYMENT": 2,
+    "POSSIBLE_DUPLICATE_CAPTURE": 3,
+    "REFUND_EXCEEDS_CAPTURE": 0,
+    "VOIDED": 1,
     "DUPLICATE_ORDER": 2,
     "FALLBACK_MATCHED": 0,
     "INVALID_ROW": 0
   },
+  "summary_without_transaction_type": {
+    "MATCHED": 977,
+    "MATCHED_SPLIT": 5,
+    "PARTIALLY_REFUNDED": 0,
+    "REFUNDED": 0,
+    "MISSING_PAYMENT": 6,
+    "ORPHAN_PAYMENT": 6,
+    "AMOUNT_MISMATCH": 10,
+    "PARTIAL_PAYMENT": 3,
+    "CURRENCY_MISMATCH": 2,
+    "POSSIBLE_DUPLICATE_CAPTURE": 3,
+    "REFUND_EXCEEDS_CAPTURE": 0,
+    "VOIDED": 0,
+    "DUPLICATE_ORDER": 2,
+    "FALLBACK_MATCHED": 0,
+    "INVALID_ROW": 0
+  },
+  "financials": [
+    {
+      "currency": "AED",
+      "orders_count": 718,
+      "orders_total": "2431145.12",
+      "captured": "2420132.52",
+      "refunded": "1045.62",
+      "net_captured": "2419086.90",
+      "voided": "28.05",
+      "unreconciled": "42636.30"
+    },
+    {
+      "currency": "EUR",
+      "orders_count": 44,
+      "orders_total": "131999.15",
+      "captured": "131998.15",
+      "refunded": "0",
+      "net_captured": "131998.15",
+      "voided": "0",
+      "unreconciled": "1.00"
+    },
+    {
+      "currency": "SAR",
+      "orders_count": 101,
+      "orders_total": "372431.56",
+      "captured": "374161.56",
+      "refunded": "0",
+      "net_captured": "374161.56",
+      "voided": "0",
+      "unreconciled": "1730"
+    },
+    {
+      "currency": "USD",
+      "orders_count": 143,
+      "orders_total": "481878.06",
+      "captured": "482026.57",
+      "refunded": "4133.72",
+      "net_captured": "477892.85",
+      "voided": "0",
+      "unreconciled": "10471.01"
+    }
+  ],
   "planted": {
     "missing_payment": [
       "ORD-2024-00055",
@@ -30,21 +95,93 @@
       "ORD-2024-00048",
       "ORD-2024-00640"
     ],
-    "duplicate_payment": [
+    "possible_duplicate_capture": [
       "ORD-2024-00354",
-      "ORD-2024-00529"
+      "ORD-2024-00529",
+      "ORD-2024-01006"
     ],
     "duplicate_order": [
       "ORD-2024-00402",
       "ORD-2024-00713"
+    ],
+    "matched_split": [
+      "ORD-2024-00168",
+      "ORD-2024-00204",
+      "ORD-2024-00604",
+      "ORD-2024-00732",
+      "ORD-2024-01002"
+    ],
+    "partial_payment": [
+      "ORD-2024-00030",
+      "ORD-2024-00062",
+      "ORD-2024-01003"
+    ],
+    "partially_refunded": [
+      "ORD-2024-00171",
+      "ORD-2024-00820",
+      "ORD-2024-00997",
+      "ORD-2024-01004"
+    ],
+    "refunded": [
+      "ORD-2024-00108",
+      "ORD-2024-00917",
+      "ORD-2024-01005"
+    ],
+    "voided": [
+      "ORD-2024-00499"
     ],
     "orphan_payment": [
       "ORD-2024-90000",
       "ORD-2024-90001",
       "ORD-2024-90002",
       "ORD-2024-90003",
-      "ORD-2024-90004"
+      "ORD-2024-90004",
+      "ORD-2024-95000"
     ]
+  },
+  "showcase": {
+    "ORD-2024-01001": {
+      "category": "MATCHED",
+      "captured": "100.00",
+      "refunded": "0",
+      "net": "100.00",
+      "diff": "0.00"
+    },
+    "ORD-2024-01002": {
+      "category": "MATCHED_SPLIT",
+      "captured": "100.00",
+      "refunded": "0",
+      "net": "100.00",
+      "diff": "0.00"
+    },
+    "ORD-2024-01003": {
+      "category": "PARTIAL_PAYMENT",
+      "captured": "95.00",
+      "refunded": "0",
+      "net": "95.00",
+      "diff": "-5.00"
+    },
+    "ORD-2024-01004": {
+      "category": "PARTIALLY_REFUNDED",
+      "captured": "100.00",
+      "refunded": "30.00",
+      "net": "70.00",
+      "diff": "0.00"
+    },
+    "ORD-2024-01005": {
+      "category": "REFUNDED",
+      "captured": "100.00",
+      "refunded": "100.00",
+      "net": "0.00",
+      "diff": "0.00"
+    },
+    "ORD-2024-01006": {
+      "category": "POSSIBLE_DUPLICATE_CAPTURE",
+      "captured": "200.00",
+      "refunded": "0",
+      "net": "200.00",
+      "diff": "100.00"
+    }
   },
   "orders_mapping": {
     "reference": "Order ID",
@@ -56,6 +193,7 @@
     "reference": "merchant_reference",
     "amount": "amount",
     "currency": "currency",
-    "date": "payment_date"
+    "date": "payment_date",
+    "transaction_type": "transaction_type"
   }
 }

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import codecs
+
 import pytest
 
 from app.csv_loader import CsvLoadError, load_csv
@@ -25,7 +27,7 @@ def test_semicolon_with_decimal_commas_is_not_confused():
 
 
 def test_utf8_bom_is_stripped_from_header():
-    loaded = load_csv("﻿ref,amount\nA,1\n".encode())
+    loaded = load_csv(codecs.BOM_UTF8 + b"ref,amount\nA,1\n")
     assert loaded.encoding == "utf-8-sig"
     assert loaded.columns == ["ref", "amount"]
 
@@ -79,12 +81,23 @@ def test_guess_mapping_prefers_exact_names_and_does_not_reuse_columns():
         "amount": "Amount",
         "currency": "Currency",
         "date": "Date",
+        "transaction_type": None,
     }
     psp = guess_mapping(
         ["psp_transaction_id", "merchant_reference", "amount", "currency", "payment_date", "status"]
     )
     assert psp["reference"] == "merchant_reference"
     assert psp["date"] == "payment_date"
+    # "status" is never guessed as the transaction type.
+    assert psp["transaction_type"] is None
+
+
+def test_guess_mapping_transaction_type():
+    cols = ["merchant_reference", "amount", "card_type", "payment_type_code", "Transaction Type"]
+    assert guess_mapping(cols)["transaction_type"] == "Transaction Type"
+    assert guess_mapping(["ref", "amount", "Type"])["transaction_type"] == "Type"
+    # "type" is exact-only: "card_type" must not be picked up.
+    assert guess_mapping(["merchant_reference", "amount", "card_type"])["transaction_type"] is None
 
 
 def test_guess_mapping_returns_none_when_nothing_fits():
@@ -93,4 +106,5 @@ def test_guess_mapping_returns_none_when_nothing_fits():
         "amount": None,
         "currency": None,
         "date": None,
+        "transaction_type": None,
     }

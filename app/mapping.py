@@ -50,7 +50,23 @@ _CANDIDATES: dict[str, tuple[str, ...]] = {
         "datetime",
         "time",
     ),
+    # Payments only. Never guessed from "status" — PSP statuses mix outcomes
+    # (FAILED, DECLINED, PENDING) with types and must be mapped deliberately.
+    "transaction_type": (
+        "transaction_type",
+        "txn_type",
+        "trx_type",
+        "transactiontype",
+        "operation_type",
+        "operation",
+        "event_type",
+        "entry_type",
+        "type",
+    ),
 }
+
+# Too generic for substring matching ("card_type", "payment_type" …).
+_EXACT_ONLY = {"type", "operation"}
 
 
 def _norm(name: str) -> str:
@@ -58,7 +74,8 @@ def _norm(name: str) -> str:
 
 
 def guess_mapping(columns: list[str]) -> dict[str, str | None]:
-    """Return ``{"reference": col|None, "amount": ..., "currency": ..., "date": ...}``.
+    """Return ``{"reference": col|None, "amount": …, "currency": …, "date": …,
+    "transaction_type": …}``.
 
     Exact normalized-name matches win, then substring matches. Each source
     column is used at most once. Order of fields matters: reference is claimed
@@ -80,7 +97,12 @@ def guess_mapping(columns: list[str]) -> dict[str, str | None]:
         if chosen is None:
             for cand in candidates:
                 for col, n in normalized.items():
-                    if col not in taken and len(cand) >= 4 and cand in n:
+                    if (
+                        col not in taken
+                        and len(cand) >= 4
+                        and cand not in _EXACT_ONLY
+                        and cand in n
+                    ):
                         chosen = col
                         break
                 if chosen:

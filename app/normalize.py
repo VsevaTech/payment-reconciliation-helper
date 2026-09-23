@@ -11,14 +11,18 @@ from decimal import Decimal, InvalidOperation
 
 import pandas as pd
 
-from app.models import ColumnMapping, Record
+from app.models import ColumnMapping, Record, TxnType
 
 _CURRENCY_PREFIX = re.compile(r"^[A-Za-z]{3}\s*|[A-Za-z]{3}$|[€$£₽]")
-_SPACES = re.compile(r"[\s  ']")
+_SPACES = re.compile(r"[\s  ']")  # space, NBSP, narrow NBSP
 
 
 class AmountParseError(ValueError):
     pass
+
+
+MAX_INTEGER_DIGITS = 15
+MAX_DECIMALS = 4
 
 
 def parse_amount(raw: str) -> Decimal:
@@ -67,7 +71,79 @@ def parse_amount(raw: str) -> Decimal:
         value = Decimal(s)
     except InvalidOperation as exc:  # pragma: no cover - guarded by regex
         raise AmountParseError(f"not a number: {raw!r}") from exc
+    # Keeps every sum exact under Decimal's default 28-digit context.
+    integer_digits = len(s.split(".")[0].lstrip("0"))
+    decimals = len(s.split(".")[1]) if "." in s else 0
+    if integer_digits > MAX_INTEGER_DIGITS or decimals > MAX_DECIMALS:
+        raise AmountParseError(
+            f"out of range (max {MAX_INTEGER_DIGITS} integer digits, "
+            f"{MAX_DECIMALS} decimals): {raw!r}"
+        )
     return -value if negative else value
+
+
+_TXN_SYNONYMS: dict[str, TxnType] = {
+    **dict.fromkeys(
+        ("PAYMENT", "CAPTURE", "CAPTURED", "SALE", "PURCHASE", "CHARGE", "DEBIT"),
+        TxnType.PAYMENT,
+    ),
+    **dict.fromkeys(
+        ("REFUND", "REFUNDED", "PARTIAL_REFUND", "CREDIT", "RETURN"),
+        TxnType.REFUND,
+    ),
+    **dict.fromkeys(
+        (
+            "VOID",
+            "VOIDED",
+            "CANCEL",
+            "CANCELLED",
+            "CANCELED",
+            "REVERSAL",
+            "REVERSED",
+            "AUTH_REVERSAL",
+        ),
+        TxnType.VOID,
+    ),
+}
+
+
+class TxnTypeParseError(ValueError):
+    pass
+
+
+def parse_txn_type(raw: str) -> TxnType:
+    """Map a PSP transaction-type label onto PAYMENT / REFUND / VOID.
+
+    Case, surrounding spaces, ``-`` and inner spaces are ignored
+    (``"Partial refund"`` → ``PARTIAL_REFUND`` → REFUND). Anything not in the
+    documented synonym list is rejected rather than guessed — e.g. ``AUTH``,
+    ``CHARGEBACK`` or ``FAILED`` rows make the row ``INVALID_ROW``.
+    """
+    key = re.sub(r"[\s\-]+", "_", (raw or "").strip().upper())
+    if not key:
+        raise TxnTypeParseError("empty transaction type")
+    try:
+        return _TXN_SYNONYMS[key]
+    except KeyError:
+        raise TxnTypeParseError(f"unknown transaction type {raw.strip()!r}") from None
+
+
+def looks_like_txn_type_column(values: list[str]) -> bool:
+    """True when every non-empty value is a known transaction type.
+
+    Used only to decide whether a *guessed* column should be pre-selected; an
+    explicitly mapped column is always used and bad values become INVALID_ROW.
+    """
+    seen = False
+    for v in values:
+        if not str(v).strip():
+            continue
+        seen = True
+        try:
+            parse_txn_type(str(v))
+        except TxnTypeParseError:
+            return False
+    return seen
 
 
 def normalize_currency(raw: str) -> str:
@@ -132,6 +208,8 @@ def build_records(
         missing.append(mapping.currency)
     if mapping.date and mapping.date not in df.columns:
         missing.append(mapping.date)
+    if mapping.transaction_type and mapping.transaction_type not in df.columns:
+        missing.append(mapping.transaction_type)
     if missing:
         raise KeyError(f"Mapped columns not found in file: {missing}")
 
@@ -140,6 +218,7 @@ def build_records(
     amt_col = df[mapping.amount].tolist()
     cur_col = df[mapping.currency].tolist() if mapping.currency else [""] * len(df)
     date_col = df[mapping.date].tolist() if mapping.date else [""] * len(df)
+    type_col = df[mapping.transaction_type].tolist() if mapping.transaction_type else [""] * len(df)
 
     for i in range(len(df)):
         ref_raw = str(ref_col[i])
@@ -156,6 +235,18 @@ def build_records(
         except AmountParseError as exc:
             amount = None
             error = error or f"invalid amount ({exc})"
+        type_raw = str(type_col[i])
+        txn_type = TxnType.PAYMENT
+        if mapping.transaction_type:
+            try:
+                txn_type = parse_txn_type(type_raw)
+            except TxnTypeParseError as exc:
+                error = error or str(exc)
+            else:
+                if txn_type is TxnType.PAYMENT and amount is not None and amount < 0:
+                    error = error or (
+                        "negative amount on a PAYMENT row (refunds must be typed REFUND)"
+                    )
         records.append(
             Record(
                 row_number=i + 1,
@@ -168,6 +259,8 @@ def build_records(
                 date_raw=date_raw,
                 date=parse_date(date_raw),
                 error=error,
+                txn_type=txn_type,
+                txn_type_raw=type_raw,
             )
         )
     return records

@@ -15,15 +15,42 @@ from fastapi.templating import Jinja2Templates
 
 from app import __version__
 from app.csv_loader import CsvLoadError, LoadedCsv, load_csv
-from app.export import to_csv, to_xlsx
+from app.export import financials_to_csv, to_csv, to_xlsx
 from app.mapping import guess_mapping
-from app.models import CATEGORY_ORDER, Category, ColumnMapping, ReconcileOptions, ReconcileResult
+from app.models import (
+    CATEGORY_ORDER,
+    FILTER_GROUPS,
+    RECONCILED_CATEGORIES,
+    Category,
+    ColumnMapping,
+    ReconcileOptions,
+    ReconcileResult,
+    ResultRow,
+)
+from app.normalize import looks_like_txn_type_column
 from app.reconcile import reconcile_frames
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
+
+def money(value: Decimal | None, signed: bool = False) -> str:
+    """Display formatting only: thousands separators, at least two decimals, no rounding."""
+    if value is None:
+        return ""
+    try:
+        if value.as_tuple().exponent > -2:  # type: ignore[operator]
+            value = value.quantize(Decimal("0.01"))
+    except InvalidOperation:  # beyond context precision: show as-is
+        pass
+    text = format(value, ",f")
+    return f"+{text}" if signed and value > 0 else text
+
+
+templates.env.filters["money"] = money
+
 SESSION_TTL_SECONDS = 60 * 60
+NO_CURRENCY = "-"
 MAX_SESSIONS = 200
 
 
@@ -107,6 +134,8 @@ def _mapping(prefix: str, form: dict[str, str], columns: list[str]) -> ColumnMap
         amount=col("amount", True) or "",
         currency=col("currency", False),
         date=col("date", False),
+        # Only the payments form offers this field; orders never carry a type.
+        transaction_type=col("transaction_type", False) if prefix == "payments" else None,
     )
 
 
@@ -146,6 +175,15 @@ async def upload(
     return RedirectResponse(url=f"/s/{session.id}/map", status_code=303)
 
 
+def _payments_guess(loaded: LoadedCsv) -> dict[str, str | None]:
+    """Header guess, but a transaction-type column is only pre-selected when its values fit."""
+    guess = guess_mapping(loaded.columns)
+    col = guess.get("transaction_type")
+    if col and not looks_like_txn_type_column(loaded.df[col].tolist()):
+        guess["transaction_type"] = None
+    return guess
+
+
 @app.get("/s/{session_id}/map", response_class=HTMLResponse)
 async def map_columns(request: Request, session_id: str) -> HTMLResponse:
     s = store.get(session_id)
@@ -154,7 +192,7 @@ async def map_columns(request: Request, session_id: str) -> HTMLResponse:
         "map.html",
         session=s,
         orders_guess=guess_mapping(s.orders.columns),
-        payments_guess=guess_mapping(s.payments.columns),
+        payments_guess=_payments_guess(s.payments),
         error=None,
     )
 
@@ -181,7 +219,7 @@ async def run_reconcile(request: Request, session_id: str) -> Response:
             "map.html",
             session=s,
             orders_guess=guess_mapping(s.orders.columns),
-            payments_guess=guess_mapping(s.payments.columns),
+            payments_guess=_payments_guess(s.payments),
             error=exc.detail,
         )
     s.result = result
@@ -196,29 +234,67 @@ def _result_or_404(s: Session) -> ReconcileResult:
     return s.result
 
 
-@app.get("/s/{session_id}/result", response_class=HTMLResponse)
-async def show_result(request: Request, session_id: str, category: str = "") -> HTMLResponse:
-    s = store.get(session_id)
-    result = _result_or_404(s)
+def _select_rows(
+    result: ReconcileResult, category: str, group: str, currency: str
+) -> tuple[list[ResultRow], str]:
+    """Rows for the result table and a human title. ``category`` wins over ``group``."""
     if category:
         try:
-            rows = result.by_category(category)
+            rows, title = result.by_category(category), category
         except ValueError as exc:
             raise HTTPException(400, f"Unknown category {category!r}") from exc
+    elif group == "all":
+        rows, title = result.rows, "All rows"
+    elif group:
+        try:
+            rows, title = result.by_group(group), FILTER_GROUPS[group][0]
+        except ValueError as exc:
+            raise HTTPException(400, f"Unknown filter {group!r}") from exc
     else:
-        rows = result.exceptions
+        rows, title = result.exceptions, "Exceptions"
+    if currency:
+        # "-" selects rows whose currency cell was empty.
+        want = "" if currency.strip() == NO_CURRENCY else currency.strip().upper()
+        rows = [
+            r
+            for r in rows
+            if r.order_currency == want
+            or want in [c.strip().replace("∅", "") for c in r.payment_currency.split(",")]
+        ]
+        title += f" · {want or 'no currency'}"
+    return rows, title
+
+
+@app.get("/s/{session_id}/result", response_class=HTMLResponse)
+async def show_result(
+    request: Request,
+    session_id: str,
+    category: str = "",
+    filter: str = "",  # noqa: A002 - public query parameter name
+    currency: str = "",
+) -> HTMLResponse:
+    s = store.get(session_id)
+    result = _result_or_404(s)
+    rows, title = _select_rows(result, category, filter, currency)
+    group_counts = result.group_counts()
     ctx = {
         "session": s,
         "result": result,
         "summary": result.summary,
         "categories": [c.value for c in CATEGORY_ORDER],
+        "reconciled_categories": [c.value for c in RECONCILED_CATEGORIES],
+        "filters": [(k, label, group_counts[k]) for k, (label, _) in FILTER_GROUPS.items()],
         "rows": rows[:2000],
         "rows_total": len(rows),
+        "table_title": title,
         "active_category": category,
+        "active_filter": filter,
+        "active_currency": currency.strip().upper(),
+        "currencies": [t.currency or NO_CURRENCY for t in result.financials],
         "matched_value": Category.MATCHED.value,
     }
     if request.headers.get("HX-Request"):
-        return _render(request, "_exceptions_table.html", **ctx)
+        return _render(request, "_results.html", **ctx)
     return _render(request, "result.html", **ctx)
 
 
@@ -230,6 +306,16 @@ async def export_csv(session_id: str, scope: str = "exceptions") -> Response:
         content=data,
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="reconciliation.csv"'},
+    )
+
+
+@app.get("/s/{session_id}/export-financials.csv")
+async def export_financials_csv(session_id: str) -> Response:
+    result = _result_or_404(store.get(session_id))
+    return Response(
+        content=financials_to_csv(result),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="financial-summary.csv"'},
     )
 
 
@@ -256,6 +342,7 @@ async def api_reconcile(
     orders_date: Annotated[str, Form()] = "",
     payments_currency: Annotated[str, Form()] = "",
     payments_date: Annotated[str, Form()] = "",
+    payments_transaction_type: Annotated[str, Form()] = "",
     tolerance: Annotated[str, Form()] = "0",
     case_insensitive: Annotated[bool, Form()] = False,
     fallback: Annotated[bool, Form()] = False,
@@ -274,6 +361,7 @@ async def api_reconcile(
         "payments_amount": payments_amount,
         "payments_currency": payments_currency,
         "payments_date": payments_date,
+        "payments_transaction_type": payments_transaction_type,
     }
     om = _mapping("orders", form, orders_csv.columns)
     pm = _mapping("payments", form, payments_csv.columns)
@@ -281,6 +369,8 @@ async def api_reconcile(
     result = reconcile_frames(orders_csv.df, payments_csv.df, om, pm, options)
     payload: dict[str, object] = {
         "summary": result.summary,
+        "financials": result.financials_dict(),
+        "transaction_type_mapped": result.transaction_type_mapped,
         "orders_total": result.orders_total,
         "payments_total": result.payments_total,
         "detected": {

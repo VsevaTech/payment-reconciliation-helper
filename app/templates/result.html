@@ -4,26 +4,62 @@
 <div class="card">
   <h1>Summary</h1>
   <p class="muted">Orders: {{ result.orders_total }} rows ({{ session.orders.filename }}) · Payments: {{ result.payments_total }} rows ({{ session.payments.filename }})
-    · tolerance {{ result.options.amount_tolerance }} · fallback {{ "on" if result.options.enable_fallback_matching else "off" }}</p>
-  <div class="tiles">
-    <a class="tile {% if active_category == '' %}active{% endif %}" href="/s/{{ session.id }}/result"
-       hx-get="/s/{{ session.id }}/result" hx-target="#table" hx-push-url="true">
-      <div class="n">{{ result.exceptions | length }}</div><div class="k">ALL EXCEPTIONS</div></a>
-    {% for c in categories %}
-    <a class="tile {% if active_category == c %}active{% endif %}" href="/s/{{ session.id }}/result?category={{ c }}"
-       hx-get="/s/{{ session.id }}/result?category={{ c }}" hx-target="#table" hx-push-url="true">
-      <div class="n">{{ summary[c] }}</div><div class="k"><span class="pill {{ c }}">{{ c }}</span></div></a>
+    · tolerance {{ result.options.amount_tolerance }} · fallback {{ "on" if result.options.enable_fallback_matching else "off" }}
+    · transaction type {% if result.transaction_type_mapped %}<code>{{ session.payments_mapping.transaction_type }}</code>{% else %}not mapped{% endif %}</p>
+
+  <h2 style="margin-top:14px">Financial summary by currency</h2>
+  {% if not result.transaction_type_mapped %}
+  <p class="note">No transaction-type column is mapped: every payment row is treated as a capture, so refunds and voids are not identified.
+    Map <code>transaction_type</code> to separate them.</p>
+  {% endif %}
+  <div class="scroll" style="max-height:none">
+  <table class="fin">
+    <thead><tr>
+      <th>Currency</th><th class="num">Orders</th><th class="num">Orders total</th><th class="num">Captured</th>
+      <th class="num">Refunded</th><th class="num">Net captured</th><th class="num">Voided</th><th class="num">Unreconciled</th>
+    </tr></thead>
+    <tbody>
+    {% for t in result.financials %}
+    <tr>
+      {% set cq = (t.currency or "-") | urlencode %}
+      <td><a href="/s/{{ session.id }}/result?filter=all&currency={{ cq }}"
+             hx-get="/s/{{ session.id }}/result?filter=all&currency={{ cq }}" hx-target="#results" hx-push-url="true"><strong>{{ t.currency or "∅" }}</strong></a></td>
+      <td class="num">{{ t.orders_count }}</td>
+      <td class="num">{{ t.orders_total | money }}</td>
+      <td class="num">{{ t.captured | money }}</td>
+      <td class="num">{% if result.transaction_type_mapped %}{{ t.refunded | money }}{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td class="num"><strong>{{ t.net_captured | money }}</strong></td>
+      <td class="num">{% if result.transaction_type_mapped %}{{ t.voided | money }}{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td class="num {% if t.unreconciled != 0 %}bad{% else %}ok{% endif %}"><strong>{{ t.unreconciled | money }}</strong></td>
+    </tr>
     {% endfor %}
+    </tbody>
+  </table>
   </div>
+  <p class="muted" style="font-size:12px;margin:6px 0 0">Each currency is totalled on its own — amounts in different currencies are never added together.
+    Orders total counts unique order references. Unreconciled = money in exception rows that does not tie out (see README).</p>
+
+  <details style="margin-top:16px">
+    <summary><strong>Counts by category</strong></summary>
+    <div class="tiles" style="margin-top:10px">
+      {% for c in categories %}
+      <a class="tile {% if active_category == c %}active{% endif %}" href="/s/{{ session.id }}/result?category={{ c }}"
+         hx-get="/s/{{ session.id }}/result?category={{ c }}" hx-target="#results" hx-push-url="true">
+        <div class="n">{{ summary[c] }}</div><div class="k"><span class="pill {{ c }}">{{ c }}</span></div></a>
+      {% endfor %}
+    </div>
+  </details>
+
   <p style="margin-top:16px">
     <a class="btn" href="/s/{{ session.id }}/export.xlsx?scope=all">Export XLSX</a>
     <a class="btn secondary" href="/s/{{ session.id }}/export.csv?scope=exceptions">Export exceptions CSV</a>
     <a class="btn secondary" href="/s/{{ session.id }}/export.csv?scope=all">Export all rows CSV</a>
+    <a class="btn secondary" href="/s/{{ session.id }}/export-financials.csv">Financial summary CSV</a>
     <a class="btn secondary" href="/s/{{ session.id }}/map">← Change mapping</a>
     <a class="btn secondary" href="/">New files</a>
   </p>
 </div>
-<div class="card" id="table">
-  {% include "_exceptions_table.html" %}
+<div class="card" id="results">
+  {% include "_results.html" %}
 </div>
 {% endblock %}

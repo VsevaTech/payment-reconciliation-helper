@@ -1,0 +1,25 @@
+{% set base = "/s/" ~ session.id ~ "/result" %}
+{% set cur = "&currency=" ~ (active_currency | urlencode) if active_currency else "" %}
+<div class="chips">
+  <a class="chip {% if not active_filter and not active_category %}active{% endif %}" href="{{ base }}?filter={{ cur }}"
+     hx-get="{{ base }}?filter={{ cur }}" hx-target="#results" hx-push-url="true">All exceptions <b>{{ result.exceptions | length }}</b></a>
+  {% for key, label, n in filters %}
+  <a class="chip {% if active_filter == key %}active{% endif %} {% if n == 0 %}empty{% endif %}" href="{{ base }}?filter={{ key }}{{ cur }}"
+     hx-get="{{ base }}?filter={{ key }}{{ cur }}" hx-target="#results" hx-push-url="true">{{ label }} <b>{{ n }}</b></a>
+  {% endfor %}
+  <a class="chip {% if active_filter == 'all' %}active{% endif %}" href="{{ base }}?filter=all{{ cur }}"
+     hx-get="{{ base }}?filter=all{{ cur }}" hx-target="#results" hx-push-url="true">All rows <b>{{ result.rows | length }}</b></a>
+</div>
+{% if currencies | length > 1 %}
+<div class="chips small">
+  <span class="muted">Currency:</span>
+  {% set f = "filter=" ~ active_filter ~ ("&category=" ~ active_category if active_category else "") %}
+  <a class="chip {% if not active_currency %}active{% endif %}" href="{{ base }}?{{ f }}"
+     hx-get="{{ base }}?{{ f }}" hx-target="#results" hx-push-url="true">any</a>
+  {% for c in currencies %}
+  <a class="chip {% if active_currency == c %}active{% endif %}" href="{{ base }}?{{ f }}&currency={{ c | urlencode }}"
+     hx-get="{{ base }}?{{ f }}&currency={{ c | urlencode }}" hx-target="#results" hx-push-url="true">{{ "∅" if c == "-" else c }}</a>
+  {% endfor %}
+</div>
+{% endif %}
+{% include "_exceptions_table.html" %}
