@@ -227,13 +227,13 @@ def test_parse_txn_type_synonyms(raw, expected):
 
 def test_unknown_or_empty_type_is_invalid_not_guessed():
     payments = (
-        f"{HDR_T}\nA-1,100.00,AED,2024-09-01,PAYMENT\nA-1,100.00,AED,2024-09-02,CHARGEBACK\n"
+        f"{HDR_T}\nA-1,100.00,AED,2024-09-01,PAYMENT\nA-1,100.00,AED,2024-09-02,FEE\n"
         "A-1,5.00,AED,2024-09-02,\n"
     )
     result = typed(ORDER_100, payments)
     invalid = result.by_category(Category.INVALID_ROW)
     assert [r.payment_rows for r in invalid] == [[2], [3]]
-    assert "unknown transaction type 'CHARGEBACK'" in invalid[0].explanation
+    assert "unknown transaction type 'FEE'" in invalid[0].explanation
     assert "empty transaction type" in invalid[1].explanation
     assert result.summary["MATCHED"] == 1
 

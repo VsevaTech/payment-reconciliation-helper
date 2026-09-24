@@ -1,8 +1,8 @@
 # Examples
 
-Small hand-written pair for a quick look at the main categories. Orders are comma-separated
-UTF-8; payments are semicolon-separated (delimiter is auto-detected) and carry a
-`transaction_type` column (`CAPTURE` / `REFUND`), which the CLI picks up automatically.
+Small hand-written pair (17 order rows) for a quick look at the main categories. Orders are
+comma-separated UTF-8; payments are semicolon-separated (delimiter is auto-detected) and carry a
+`transaction_type` column (`CAPTURE` / `REFUND` / `CHARGEBACK`), which the CLI picks up automatically.
 
 ```
 python -m app.cli examples/orders_small.csv examples/payments_small.csv
@@ -22,11 +22,13 @@ Expected result:
 | PARTIAL_PAYMENT            |     1 | ORD-1013 — 60.00 + 35.00 for 100.00, difference −5.00            |
 | CURRENCY_MISMATCH          |     1 | ORD-1005 (SAR vs AED)                                            |
 | POSSIBLE_DUPLICATE_CAPTURE |     1 | ORD-1007 — TXN-5 and TXN-6 both capture 2199.00                  |
+| CHARGED_BACK               |     1 | ORD-1016 — captured 100.00, charged back 100.00, net 0.00        |
 | DUPLICATE_ORDER            |     1 | second ORD-1006 row in orders                                    |
 
 With `--no-transaction-type` every payment row is treated as a capture: ORD-1014 becomes
-`AMOUNT_MISMATCH` (a negative amount is never netted silently) and ORD-1015 looks like a
-duplicate capture — which is why the column should be mapped when an export mixes types.
+`AMOUNT_MISMATCH` (a negative amount is never netted silently), so does the ORD-1016 chargeback,
+and ORD-1015 looks like a duplicate capture — which is why the column should be mapped when an
+export mixes types.
 
 For a realistic volume (1000+ rows, planted cases, semicolon/CRLF PSP export, shuffled rows)
 see [`demo-data/`](../demo-data/).
