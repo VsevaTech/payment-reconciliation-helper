@@ -30,6 +30,10 @@ PLANTED = {
     "partially_refunded": "PARTIALLY_REFUNDED",
     "refunded": "REFUNDED",
     "voided": "VOIDED",
+    "charged_back": "CHARGED_BACK",
+    "chargeback_reversed": "CHARGEBACK_REVERSED",
+    "chargeback_exceeds_capture": "CHARGEBACK_EXCEEDS_CAPTURE",
+    "reversal_exceeds_chargeback": "REVERSAL_EXCEEDS_CHARGEBACK",
     "orphan_payment": "ORPHAN_PAYMENT",
 }
 
@@ -85,12 +89,14 @@ def verify(payload: dict, expected: dict, *, typed: bool = True) -> list[str]:
             "category": r["category"],
             "captured": r["captured_amount"],
             "refunded": r["refunded_amount"],
+            "chargeback": r["chargeback_amount"],
+            "chargeback_reversed": r["chargeback_reversed_amount"],
             "net": r["net_amount"],
             "diff": r["difference"],
         }
         if got != exp:
             fail(f"showcase {ref}: got {got}, expected {exp}")
-    checks.append("showcase amounts (split / partial / refunds / duplicate)")
+    checks.append("showcase amounts (split / partial / refunds / chargebacks / duplicate)")
     return checks
 
 

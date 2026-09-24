@@ -61,7 +61,10 @@ def main(argv: list[str] | None = None) -> int:
         "--payments-transaction-type",
         dest="payments_transaction_type",
         default=None,
-        help="payments column with PAYMENT/REFUND/VOID (guessed from the header if omitted)",
+        help=(
+            "payments column with PAYMENT/REFUND/VOID/CHARGEBACK/CHARGEBACK_REVERSAL "
+            "(guessed from the header if omitted)"
+        ),
     )
     p.add_argument(
         "--no-transaction-type",
@@ -118,12 +121,21 @@ def main(argv: list[str] | None = None) -> int:
         for c in CATEGORY_ORDER:
             print(f"{c.value:<{width}}  {summary[c.value]:>6}")
         print()
-        cols = ["currency", "orders_total", "captured", "refunded", "net_captured", "unreconciled"]
+        cols = [
+            "currency",
+            "orders_total",
+            "captured",
+            "refunded",
+            "charged_back",
+            "chargeback_reversed",
+            "net_captured",
+            "unreconciled",
+        ]
         print("  ".join(f"{c:>14}" for c in cols))
         for t in result.financials_dict():
             print("  ".join(f"{str(t[c]):>14}" for c in cols))
         if not result.transaction_type_mapped:
-            print("(transaction type not mapped: refunds/voids are not identified)")
+            print("(transaction type not mapped: refunds/voids/chargebacks are not identified)")
     if args.xlsx:
         args.xlsx.write_bytes(to_xlsx(result))
     if args.csv:

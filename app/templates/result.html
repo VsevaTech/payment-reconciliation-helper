@@ -9,14 +9,14 @@
 
   <h2 style="margin-top:14px">Financial summary by currency</h2>
   {% if not result.transaction_type_mapped %}
-  <p class="note">No transaction-type column is mapped: every payment row is treated as a capture, so refunds and voids are not identified.
+  <p class="note">No transaction-type column is mapped: every payment row is treated as a capture, so refunds, voids and chargebacks are not identified.
     Map <code>transaction_type</code> to separate them.</p>
   {% endif %}
   <div class="scroll" style="max-height:none">
   <table class="fin">
     <thead><tr>
       <th>Currency</th><th class="num">Orders</th><th class="num">Orders total</th><th class="num">Captured</th>
-      <th class="num">Refunded</th><th class="num">Net captured</th><th class="num">Voided</th><th class="num">Unreconciled</th>
+      <th class="num">Refunded</th><th class="num">Charged back</th><th class="num">CB reversed</th><th class="num">Net captured</th><th class="num">Voided</th><th class="num">Unreconciled</th>
     </tr></thead>
     <tbody>
     {% for t in result.financials %}
@@ -28,6 +28,8 @@
       <td class="num">{{ t.orders_total | money }}</td>
       <td class="num">{{ t.captured | money }}</td>
       <td class="num">{% if result.transaction_type_mapped %}{{ t.refunded | money }}{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td class="num">{% if result.transaction_type_mapped %}{{ t.charged_back | money }}{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td class="num">{% if result.transaction_type_mapped %}{{ t.chargeback_reversed | money }}{% else %}<span class="muted">—</span>{% endif %}</td>
       <td class="num"><strong>{{ t.net_captured | money }}</strong></td>
       <td class="num">{% if result.transaction_type_mapped %}{{ t.voided | money }}{% else %}<span class="muted">—</span>{% endif %}</td>
       <td class="num {% if t.unreconciled != 0 %}bad{% else %}ok{% endif %}"><strong>{{ t.unreconciled | money }}</strong></td>
@@ -37,7 +39,7 @@
   </table>
   </div>
   <p class="muted" style="font-size:12px;margin:6px 0 0">Each currency is totalled on its own — amounts in different currencies are never added together.
-    Orders total counts unique order references. Unreconciled = money in exception rows that does not tie out (see README).</p>
+    Orders total counts unique order references. Net captured = captured − refunded − charged back + chargeback reversed. Unreconciled = money in exception rows that does not tie out (see README).</p>
 
   <details style="margin-top:16px">
     <summary><strong>Counts by category</strong></summary>

@@ -104,7 +104,43 @@ _TXN_SYNONYMS: dict[str, TxnType] = {
         ),
         TxnType.VOID,
     ),
+    **dict.fromkeys(
+        (
+            "CHARGEBACK",
+            "CHARGE_BACK",
+            "CHARGED_BACK",
+            "SECOND_CHARGEBACK",
+            "DISPUTE",
+            "DISPUTE_LOST",
+        ),
+        TxnType.CHARGEBACK,
+    ),
+    **dict.fromkeys(
+        (
+            "CHARGEBACK_REVERSAL",
+            "CHARGEBACK_REVERSED",
+            "CHARGE_BACK_REVERSAL",
+            "REVERSED_CHARGEBACK",
+            "DISPUTE_REVERSAL",
+            "DISPUTE_WON",
+        ),
+        TxnType.CHARGEBACK_REVERSAL,
+    ),
 }
+
+# Dispute lifecycle events that move no money. Rejected with a precise hint
+# instead of being mistaken for a chargeback.
+_NO_MONEY_DISPUTE_EVENTS = frozenset(
+    {
+        "NOTIFICATION_OF_CHARGEBACK",
+        "CHARGEBACK_NOTIFICATION",
+        "RETRIEVAL_REQUEST",
+        "REQUEST_FOR_INFORMATION",
+        "DISPUTE_INQUIRY",
+        "INQUIRY",
+        "DISPUTE_OPENED",
+    }
+)
 
 
 class TxnTypeParseError(ValueError):
@@ -112,16 +148,22 @@ class TxnTypeParseError(ValueError):
 
 
 def parse_txn_type(raw: str) -> TxnType:
-    """Map a PSP transaction-type label onto PAYMENT / REFUND / VOID.
+    """Map a PSP transaction-type label onto a :class:`TxnType`.
 
     Case, surrounding spaces, ``-`` and inner spaces are ignored
     (``"Partial refund"`` → ``PARTIAL_REFUND`` → REFUND). Anything not in the
     documented synonym list is rejected rather than guessed — e.g. ``AUTH``,
-    ``CHARGEBACK`` or ``FAILED`` rows make the row ``INVALID_ROW``.
+    ``FEE`` or ``FAILED`` rows make the row ``INVALID_ROW``. Dispute
+    notifications that move no money (``RETRIEVAL_REQUEST`` …) are rejected
+    with an explicit reason.
     """
     key = re.sub(r"[\s\-]+", "_", (raw or "").strip().upper())
     if not key:
         raise TxnTypeParseError("empty transaction type")
+    if key in _NO_MONEY_DISPUTE_EVENTS:
+        raise TxnTypeParseError(
+            f"dispute notification {raw.strip()!r} moves no money — filter it out"
+        )
     try:
         return _TXN_SYNONYMS[key]
     except KeyError:

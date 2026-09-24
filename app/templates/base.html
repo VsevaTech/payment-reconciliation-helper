@@ -33,8 +33,10 @@
   .num { text-align:right; font-variant-numeric:tabular-nums; }
   .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:600; }
   .pill.MATCHED, .pill.MATCHED_SPLIT, .pill.FALLBACK_MATCHED { background:#e6f4ea; color:var(--ok); }
-  .pill.PARTIALLY_REFUNDED, .pill.REFUNDED { background:#e0f0ff; color:#0b4f9c; }
-  .pill.MISSING_PAYMENT, .pill.ORPHAN_PAYMENT, .pill.REFUND_EXCEEDS_CAPTURE { background:#fde7e9; color:var(--bad); }
+  .pill.PARTIALLY_REFUNDED, .pill.REFUNDED, .pill.CHARGEBACK_REVERSED { background:#e0f0ff; color:#0b4f9c; }
+  .pill.MISSING_PAYMENT, .pill.ORPHAN_PAYMENT, .pill.REFUND_EXCEEDS_CAPTURE,
+  .pill.CHARGEBACK_EXCEEDS_CAPTURE, .pill.REVERSAL_EXCEEDS_CHARGEBACK { background:#fde7e9; color:var(--bad); }
+  .pill.CHARGED_BACK { background:#ffe3cc; color:#9a3d00; }
   .pill.AMOUNT_MISMATCH, .pill.PARTIAL_PAYMENT, .pill.CURRENCY_MISMATCH { background:#fff4ce; color:var(--warn); }
   .pill.POSSIBLE_DUPLICATE_CAPTURE, .pill.DUPLICATE_ORDER { background:#e8e0f7; color:var(--dup); }
   .pill.INVALID_ROW, .pill.VOIDED { background:#eee; color:#444; }

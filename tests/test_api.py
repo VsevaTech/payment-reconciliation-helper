@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from openpyxl import load_workbook
 
 from app.main import app
+from app.models import RECONCILED_CATEGORIES
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = json.loads((ROOT / "demo-data" / "expected.json").read_text(encoding="utf-8"))
@@ -89,7 +90,7 @@ def test_full_ui_flow(client: TestClient):
     csv_resp = client.get(f"/s/{session_id}/export.csv")
     assert csv_resp.status_code == 200
     assert csv_resp.headers["content-disposition"].endswith('filename="reconciliation.csv"')
-    reconciled = {"MATCHED", "MATCHED_SPLIT", "PARTIALLY_REFUNDED", "REFUNDED"}
+    reconciled = {c.value for c in RECONCILED_CATEGORIES}
     exceptions_total = sum(v for k, v in EXPECTED["summary"].items() if k not in reconciled)
     assert len(csv_resp.content.decode("utf-8-sig").strip().splitlines()) == exceptions_total + 1
 
@@ -199,6 +200,8 @@ def test_result_page_financial_summary_per_currency(client: TestClient):
     net = f"{Decimal(aed['net_captured']):,.2f}"
     assert f"<strong>{net}</strong>" in page
     assert "not mapped" not in page.split("Financial summary")[0]
+    assert "Charged back" in page and "CB reversed" in page
+    assert f'<td class="num">{Decimal(aed["charged_back"]):,.2f}</td>' in page
 
 
 @pytest.mark.parametrize(
@@ -212,6 +215,15 @@ def test_result_page_financial_summary_per_currency(client: TestClient):
         ("duplicates", ["POSSIBLE_DUPLICATE_CAPTURE", "DUPLICATE_ORDER"]),
         ("orphans", ["ORPHAN_PAYMENT"]),
         ("matched", ["MATCHED"]),
+        (
+            "chargebacks",
+            [
+                "CHARGED_BACK",
+                "CHARGEBACK_REVERSED",
+                "CHARGEBACK_EXCEEDS_CAPTURE",
+                "REVERSAL_EXCEEDS_CHARGEBACK",
+            ],
+        ),
     ],
 )
 def test_result_filters(client: TestClient, flt: str, categories: list[str]):

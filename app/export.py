@@ -22,6 +22,8 @@ COLUMNS = [
     "payment_amount",
     "captured_amount",
     "refunded_amount",
+    "chargeback_amount",
+    "chargeback_reversed_amount",
     "voided_amount",
     "net_amount",
     "difference",
@@ -39,6 +41,8 @@ MONEY_COLUMNS = (
     "payment_amount",
     "captured_amount",
     "refunded_amount",
+    "chargeback_amount",
+    "chargeback_reversed_amount",
     "voided_amount",
     "net_amount",
     "difference",
@@ -50,6 +54,8 @@ FINANCIAL_COLUMNS = [
     "orders_total",
     "captured",
     "refunded",
+    "charged_back",
+    "chargeback_reversed",
     "net_captured",
     "voided",
     "unreconciled",
@@ -60,6 +66,7 @@ _FILL = {
     Category.MATCHED_SPLIT: "E6F4EA",
     Category.PARTIALLY_REFUNDED: "E0F0FF",
     Category.REFUNDED: "E0F0FF",
+    Category.CHARGEBACK_REVERSED: "E0F0FF",
     Category.MISSING_PAYMENT: "FDE7E9",
     Category.ORPHAN_PAYMENT: "FDE7E9",
     Category.AMOUNT_MISMATCH: "FFF4CE",
@@ -67,6 +74,9 @@ _FILL = {
     Category.CURRENCY_MISMATCH: "FFF4CE",
     Category.POSSIBLE_DUPLICATE_CAPTURE: "E8E0F7",
     Category.REFUND_EXCEEDS_CAPTURE: "FDE7E9",
+    Category.CHARGED_BACK: "FFE3CC",
+    Category.CHARGEBACK_EXCEEDS_CAPTURE: "FDE7E9",
+    Category.REVERSAL_EXCEEDS_CHARGEBACK: "FDE7E9",
     Category.VOIDED: "EEEEEE",
     Category.DUPLICATE_ORDER: "E8E0F7",
     Category.FALLBACK_MATCHED: "E0F0FF",
@@ -124,7 +134,9 @@ def to_xlsx(result: ReconcileResult, include_matched: bool = True) -> bytes:
     ws.append(
         [
             "Transaction type column",
-            "mapped" if result.transaction_type_mapped else "not mapped (refunds not identified)",
+            "mapped"
+            if result.transaction_type_mapped
+            else "not mapped (refunds / chargebacks not identified)",
         ]
     )
     ws.append(FINANCIAL_COLUMNS)
@@ -141,7 +153,7 @@ def to_xlsx(result: ReconcileResult, include_matched: bool = True) -> bytes:
         for col in range(3, len(FINANCIAL_COLUMNS) + 1):
             ws.cell(row=ws.max_row, column=col).number_format = "#,##0.00"
     ws.column_dimensions["A"].width = 28
-    for letter in "BCDEFGH":
+    for letter in "BCDEFGHIJ":
         ws.column_dimensions[letter].width = 16
 
     def write_sheet(title: str, rows: list[ResultRow]) -> None:

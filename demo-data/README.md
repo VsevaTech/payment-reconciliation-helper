@@ -6,12 +6,12 @@ generated deterministically by `generate.py` (fixed seed, idempotent). Legacy en
 
 | File            | Rows | Format                                                        |
 |-----------------|-----:|---------------------------------------------------------------|
-| `orders.csv`    | 1008 | UTF-8, comma, internal columns `Order ID, Customer, Amount, Currency, Date, Channel` |
-| `payments.csv`  | 1025 | UTF-8, **semicolon**, **CRLF**, shuffled, PSP columns `psp_transaction_id, merchant_reference, amount, currency, payment_date, status, transaction_type, card_brand, merchant_name`; refunds have negative amounts |
+| `orders.csv`    | 1012 | UTF-8, comma, internal columns `Order ID, Customer, Amount, Currency, Date, Channel` |
+| `payments.csv`  | 1035 | UTF-8, **semicolon**, **CRLF**, shuffled, PSP columns `psp_transaction_id, merchant_reference, amount, currency, payment_date, status, transaction_type, card_brand, merchant_name`; refunds and chargebacks have negative amounts |
 | `expected.json` |    — | exact summary (with and without the transaction type), per-currency financials, planted references, showcase amounts |
 | `verify.py`     |    — | checks a CLI `--json-full` or API (`include_rows=true`) payload against `expected.json` |
 
-1000 random orders plus 6 hand-made "showcase" orders (all 100.00 AED) and 2 duplicated order
+1000 random orders plus 10 hand-made "showcase" orders (all 100.00 AED) and 2 duplicated order
 rows. Expected result with `transaction_type` mapped:
 
 ```
@@ -19,12 +19,16 @@ MATCHED                     976
 MATCHED_SPLIT                 5   4 random (one 3-way) + ORD-2024-01002: 60.00 + 40.00
 PARTIALLY_REFUNDED            4   3 random + ORD-2024-01004: 100.00 captured, 30.00 refunded → net 70.00
 REFUNDED                      3   2 random + ORD-2024-01005: 100.00 captured, 100.00 refunded
+CHARGEBACK_REVERSED           1   ORD-2024-01008: 100.00 captured, 100.00 charged back, 100.00 reversed
 MISSING_PAYMENT               6
 ORPHAN_PAYMENT                6   5 captures + 1 refund without an order
 AMOUNT_MISMATCH               3   (+0.01 / −0.10 / +10.00)
 PARTIAL_PAYMENT               3   2 random + ORD-2024-01003: 60.00 + 35.00 → difference −5.00
 CURRENCY_MISMATCH             2
 POSSIBLE_DUPLICATE_CAPTURE    3   2 random + ORD-2024-01006: 100.00 + 100.00
+CHARGED_BACK                  1   ORD-2024-01007: 100.00 captured, 100.00 charged back → net 0.00
+CHARGEBACK_EXCEEDS_CAPTURE    1   ORD-2024-01009: 100.00 captured, refunded AND charged back → net −100.00
+REVERSAL_EXCEEDS_CHARGEBACK   1   ORD-2024-01010: 100.00 captured, 100.00 reversal without a chargeback
 VOIDED                        1   order whose only transaction is a VOID
 DUPLICATE_ORDER               2   (order row exported twice)
 ```
@@ -32,8 +36,9 @@ DUPLICATE_ORDER               2   (order row exported twice)
 `ORD-2024-01001` is the plain 100.00 → 100.00 `MATCHED` case.
 
 Without the transaction type (`summary_without_transaction_type`): refund groups turn into
-`AMOUNT_MISMATCH` (negative amounts are not netted), the voided order looks `MATCHED` — this
-demonstrates why the column should be mapped.
+`AMOUNT_MISMATCH` (negative amounts are not netted), so do the three groups with a negative
+chargeback, the lone reversal looks like a `POSSIBLE_DUPLICATE_CAPTURE` and the voided order
+looks `MATCHED` — this demonstrates why the column should be mapped.
 
 Expectations are computed inside `generate.py` from what it planted, independently of the
 engine. Verify:
