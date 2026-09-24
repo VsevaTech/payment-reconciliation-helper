@@ -6,8 +6,9 @@
 
 Upload an internal **orders** export and a PSP / acquirer **payments** export, map a handful of
 columns, and get a deterministic list of discrepancies — missing payments, orphan captures, amount
-and currency mismatches, split and partial payments, refunds, possible duplicate captures — plus a
-per-currency financial summary and an XLSX/CSV report you can hand to finance.
+and currency mismatches, split and partial payments, refunds, chargebacks and their reversals,
+possible duplicate captures — plus a per-currency financial summary and an XLSX/CSV report you can
+hand to finance.
 
 ```
 orders.csv + payments.csv → map columns → reconcile → financial summary + exceptions → export
@@ -16,12 +17,16 @@ orders.csv + payments.csv → map columns → reconcile → financial summary + 
 Demo dataset result (`demo-data/`, transaction type mapped):
 
 ```
+reconciled                           exceptions
 MATCHED                     976      MISSING_PAYMENT             6
 MATCHED_SPLIT                 5      ORPHAN_PAYMENT              6
 PARTIALLY_REFUNDED            4      AMOUNT_MISMATCH             3
 REFUNDED                      3      PARTIAL_PAYMENT             3
-                                     CURRENCY_MISMATCH           2
+CHARGEBACK_REVERSED           1      CURRENCY_MISMATCH           2
                                      POSSIBLE_DUPLICATE_CAPTURE  3
+                                     CHARGED_BACK                1
+                                     CHARGEBACK_EXCEEDS_CAPTURE  1
+                                     REVERSAL_EXCEEDS_CHARGEBACK 1
                                      VOIDED                      1
                                      DUPLICATE_ORDER             2
 ```
@@ -36,6 +41,11 @@ Order ORD-1 100.00 AED
 Order ORD-2 100.00 AED
   payments: capture 100.00 (row 4, type CAPTURE) + refund 30.00 (row 9, type REFUND)
   → PARTIALLY_REFUNDED   captured 100.00 · refunded 30.00 · net 70.00 · payment_rows 4;9
+
+Order ORD-3 100.00 AED
+  payments: capture 100.00 + refund 100.00 + chargeback 100.00
+  → CHARGEBACK_EXCEEDS_CAPTURE   net -100.00 · unreconciled 100.00
+    "the cardholder got the money back twice (refund and chargeback)"
 ```
 
 ## Why this exists
@@ -59,6 +69,9 @@ buried. Typical findings:
 | Amount mismatch | PSP fee deducted before export, rounding in FX conversion, coupon applied post-checkout |
 | Split / partial payment | Split tender (two cards), instalments, partial capture of a multi-shipment order |
 | Refund | Customer return, goodwill credit, cancelled line item after capture |
+| Chargeback | Cardholder disputed with the issuer ("not received", fraud); money is debited from the merchant |
+| Refund **and** chargeback | Support refunded while a dispute was already open — the money went back twice |
+| Chargeback reversal | Merchant won the representment; money comes back, often weeks later |
 | Currency mismatch | Dynamic Currency Conversion at the terminal, multi-currency pricing bug |
 | Possible duplicate capture | Double-click on "Pay", retry storm on a timeout, manual capture after auto-capture |
 | Duplicate order | ERP export joins one order per line item, or a replayed integration message |
@@ -94,7 +107,8 @@ uvicorn app.main:app --reload
 4. **Run reconciliation** → the financial summary shows orders total, captured, refunded, net
    captured, voided and unreconciled amount **per currency**; the filter chips (Matched, Split,
    Partial, Refunded, Missing, Amount mismatch, Duplicates, Orphans, …) and the currency chips
-   narrow the table. Exact expectations: [`demo-data/expected.json`](demo-data/expected.json).
+   narrow the table; **Chargebacks** shows open, reversed and inconsistent chargebacks. Exact
+   expectations: [`demo-data/expected.json`](demo-data/expected.json).
 5. **Export XLSX** → `reconciliation.xlsx` with `Summary` (counts + financial summary),
    `Exceptions` and `All rows` sheets. **Financial summary CSV** exports the per-currency table.
 
@@ -139,14 +153,19 @@ All rules are deterministic, run in this order, and each result row carries a on
    every other row is a duplicate.
 4. **Payment groups** — all valid payment rows sharing a reference form one group, ordered by
    `payment_date`, then file order. The group is split into captures (`PAYMENT`), refunds
-   (`REFUND`) and voids (`VOID`). Repeated references are **not** automatically duplicates.
+   (`REFUND`), voids (`VOID`), chargebacks (`CHARGEBACK`) and chargeback reversals
+   (`CHARGEBACK_REVERSAL`). Repeated references are **not** automatically duplicates.
 5. **Canonical order ↔ payment group** on the exact reference, first matching rule wins:
 
    | Situation | Category |
    |---|---|
    | any payment currency ≠ order currency | **`CURRENCY_MISMATCH`** — amounts never summed or compared across currencies |
+   | chargeback reversals > chargebacks (incl. a reversal with no chargeback) | **`REVERSAL_EXCEEDS_CHARGEBACK`** |
+   | no captures, a chargeback | **`CHARGEBACK_EXCEEDS_CAPTURE`** |
+   | no captures, a refund | **`REFUND_EXCEEDS_CAPTURE`** |
    | no captures, only voids | **`VOIDED`** |
-   | refunds > captures (incl. refund with no capture) | **`REFUND_EXCEEDS_CAPTURE`** |
+   | refunds > captures | **`REFUND_EXCEEDS_CAPTURE`** |
+   | refunds + open chargebacks > captures | **`CHARGEBACK_EXCEEDS_CAPTURE`** |
    | 1 capture, capture = order (± tolerance) | **`MATCHED`** |
    | 1 capture, otherwise | **`AMOUNT_MISMATCH`** (signed difference) |
    | ≥2 captures, sum equals order | **`MATCHED_SPLIT`** |
@@ -154,10 +173,12 @@ All rules are deterministic, run in this order, and each result row carries a on
    | ≥2 captures, sum above order, surplus explained by a repeated capture | **`POSSIBLE_DUPLICATE_CAPTURE`** |
    | ≥2 captures, sum above order, not explained | **`AMOUNT_MISMATCH`** |
 
-   Then, if the captures reconciled (`MATCHED` / `MATCHED_SPLIT`) and something was refunded:
-   refunded = captured → **`REFUNDED`**, otherwise **`PARTIALLY_REFUNDED`**. A refund never hides a
-   capture problem: a partial payment that was also refunded stays `PARTIAL_PAYMENT`, with the
-   refund in the columns and the explanation.
+   Then, if the captures reconciled (`MATCHED` / `MATCHED_SPLIT`):
+   a chargeback not fully reversed → **`CHARGED_BACK`**; chargebacks all reversed →
+   **`CHARGEBACK_REVERSED`**; otherwise, if something was refunded: refunded = captured →
+   **`REFUNDED`**, else **`PARTIALLY_REFUNDED`**. A refund or chargeback never hides a capture
+   problem: a partial payment that was also refunded or charged back stays `PARTIAL_PAYMENT`, with
+   the movements in the columns and the explanation.
 6. **`MISSING_PAYMENT`** — canonical order with no payment reference;
    **`ORPHAN_PAYMENT`** — payment group with no order reference (one row per reference, listing all
    of its source rows).
@@ -167,7 +188,8 @@ All rules are deterministic, run in this order, and each result row carries a on
    outcome of rules 1–6.
 
 Every input row appears in exactly one result row (tests and `demo-data/verify.py` enforce this).
-`difference` is always *captured − ordered*; refunds are reported separately, never netted into it.
+`difference` is always *captured − ordered*; refunds and chargebacks are reported separately,
+never netted into it. `net_amount` is *captured − refunded − charged back + chargeback reversed*.
 
 ### Split and partial payments
 
@@ -204,6 +226,34 @@ With a mapped transaction-type column:
 Example: capture `100.00` + refund `30.00` → `PARTIALLY_REFUNDED`, captured 100.00, refunded
 30.00, net 70.00. Capture `100.00` + refund `100.00` → `REFUNDED`, net 0.00.
 
+### Chargebacks
+
+A chargeback is money the issuer takes back from the merchant on the cardholder's behalf; a
+chargeback reversal gives it back after a won dispute. Both are grouped with the order by
+reference, like refunds, and both are read by magnitude (`-100.00` and `100.00` are the same
+chargeback).
+
+| Payments for a 100.00 order | Category | Net | Unreconciled |
+|---|---|---|---|
+| capture 100 + chargeback 100 | `CHARGED_BACK` | 0.00 | 0 |
+| capture 100 + chargeback 100 + reversal 40 | `CHARGED_BACK` (60 open, partially reversed) | 40.00 | 0 |
+| capture 100 + chargeback 100 + reversal 100 | `CHARGEBACK_REVERSED` (reconciled) | 100.00 | 0 |
+| capture 100 + refund 30 + chargeback 70 | `CHARGED_BACK` | 0.00 | 0 |
+| capture 100 + refund 100 + chargeback 100 | `CHARGEBACK_EXCEEDS_CAPTURE` | -100.00 | 100 |
+| chargeback 100, nothing captured | `CHARGEBACK_EXCEEDS_CAPTURE` | -100.00 | 200 |
+| capture 100 + reversal 100, no chargeback | `REVERSAL_EXCEEDS_CHARGEBACK` | 200.00 | 100 |
+| captures 60 + 35 + chargeback 20 | `PARTIAL_PAYMENT` (capture problem wins) | 75.00 | 5 |
+
+- **`CHARGED_BACK` is an exception with zero unreconciled.** The money ties out — the PSP debited
+  it for a documented reason — but someone has to act (fight the dispute, write it off). The
+  amount at stake is in the `Charged back` / `CB reversed` columns, not in `Unreconciled`.
+- **`CHARGEBACK_EXCEEDS_CAPTURE`** is the expensive one: refunds plus open chargebacks exceed what
+  was captured, i.e. the cardholder was credited twice. The excess is unreconciled.
+- A reversed chargeback only offsets chargebacks; it never cancels a refund.
+- Dispute notifications that move no money (`NOTIFICATION_OF_CHARGEBACK`, `RETRIEVAL_REQUEST`,
+  `INQUIRY`, …) are `INVALID_ROW` with the reason "moves no money — filter it out", rather than
+  being counted as a chargeback.
+
 ### Transaction-type mapping
 
 Optional, payments only (`payments_transaction_type` in the API, `--payments-transaction-type` in
@@ -219,16 +269,19 @@ spaces and `-`:
 | `PAYMENT` | `PAYMENT`, `CAPTURE`, `CAPTURED`, `SALE`, `PURCHASE`, `CHARGE`, `DEBIT` |
 | `REFUND` | `REFUND`, `REFUNDED`, `PARTIAL_REFUND`, `CREDIT`, `RETURN` |
 | `VOID` | `VOID`, `VOIDED`, `CANCEL`, `CANCELLED`, `CANCELED`, `REVERSAL`, `REVERSED`, `AUTH_REVERSAL` |
+| `CHARGEBACK` | `CHARGEBACK`, `CHARGE_BACK`, `CHARGED_BACK`, `SECOND_CHARGEBACK`, `DISPUTE`, `DISPUTE_LOST` |
+| `CHARGEBACK_REVERSAL` | `CHARGEBACK_REVERSAL`, `CHARGEBACK_REVERSED`, `CHARGE_BACK_REVERSAL`, `REVERSED_CHARGEBACK`, `DISPUTE_REVERSAL`, `DISPUTE_WON` |
 
-Anything else (`AUTH`, `CHARGEBACK`, `FAILED`, empty) makes that row `INVALID_ROW` instead of being
-guessed.
+Plain `REVERSAL` stays a `VOID` (authorisation reversal); a chargeback reversal must say so.
+Anything else (`AUTH`, `FEE`, `FAILED`, empty, dispute notifications) makes that row
+`INVALID_ROW` instead of being guessed.
 
 **Not mapped → previous behaviour:** every payment row is a capture with its signed amount. Split,
-partial and duplicate-capture detection still work; refunds and voids are *not* identified, the
-refunded/voided columns stay empty and the UI says so. A group that contains a negative amount is
+partial and duplicate-capture detection still work; refunds, voids and chargebacks are *not*
+identified, their columns stay empty and the UI says so. A group that contains a negative amount is
 reported as `AMOUNT_MISMATCH` with a hint to map the column, never silently netted. On the demo
 dataset the difference is visible: see `summary_without_transaction_type` in `expected.json`
-(refund groups become `AMOUNT_MISMATCH`, the voided order looks `MATCHED`).
+(refund and chargeback groups become `AMOUNT_MISMATCH`, the voided order looks `MATCHED`).
 
 ### Financial summary
 
@@ -240,28 +293,33 @@ currency — **different currencies are never added together**:
 | Orders total | sum of unique (canonical) valid orders in that currency; duplicate order rows excluded |
 | Captured | sum of `PAYMENT` rows (all rows when no type is mapped), orphans included |
 | Refunded | sum of `REFUND` rows (absolute) |
-| Net captured | captured − refunded |
+| Charged back | sum of `CHARGEBACK` rows (absolute) |
+| CB reversed | sum of `CHARGEBACK_REVERSAL` rows (absolute) |
+| Net captured | captured − refunded − charged back + CB reversed |
 | Voided | sum of `VOID` rows (absolute), informational |
 | Unreconciled | money in exception rows that does not tie out, see below |
 
 Unreconciled, per result row, in the currency of the money concerned:
 `MISSING_PAYMENT` / `VOIDED` → order amount; `AMOUNT_MISMATCH`, `PARTIAL_PAYMENT`,
-`POSSIBLE_DUPLICATE_CAPTURE` → `|captured − order|`; `REFUND_EXCEEDS_CAPTURE` →
-`|captured − order| + (refunded − captured)`; `ORPHAN_PAYMENT` → gross captured + refunded
-(never netted); `CURRENCY_MISMATCH` → the order amount in the order currency **and** the payments in each foreign
-currency. `MATCHED`, `MATCHED_SPLIT`, `PARTIALLY_REFUNDED`, `REFUNDED` and `FALLBACK_MATCHED`
-contribute 0; `DUPLICATE_ORDER` and `INVALID_ROW` are counted, not valued. Without a mapped
-transaction type, un-netted negative amounts in an exception group are added as well. Amounts
-are absolute, so unreconciled is never negative.
+`POSSIBLE_DUPLICATE_CAPTURE` → `|captured − order|`; `REFUND_EXCEEDS_CAPTURE`,
+`CHARGEBACK_EXCEEDS_CAPTURE`, `REVERSAL_EXCEEDS_CHARGEBACK` →
+`|captured − order| + max(0, refunded + open chargebacks − captured) + max(0, reversed − charged back)`;
+`ORPHAN_PAYMENT` → gross captured + refunded + charged back + reversed (never netted);
+`CURRENCY_MISMATCH` → the order amount in the order currency **and** the payments in each foreign
+currency. `MATCHED`, `MATCHED_SPLIT`, `PARTIALLY_REFUNDED`, `REFUNDED`, `CHARGEBACK_REVERSED`,
+`CHARGED_BACK` and `FALLBACK_MATCHED` contribute 0; `DUPLICATE_ORDER` and `INVALID_ROW` are
+counted, not valued. Without a mapped transaction type, un-netted negative amounts in an exception
+group are added as well. Amounts are absolute, so unreconciled is never negative.
 
 ### Result filters
 
 Chips on the results page (and `?filter=` on `/s/{id}/result`): `matched`, `split`, `partial`,
 `refunded` (partially + fully), `missing`, `amount_mismatch`, `currency_mismatch`, `duplicates`
-(possible duplicate captures + duplicate orders), `orphans`, `refund_issues`, `voided`, `fallback`,
-`invalid`, `all`. `?currency=AED` narrows any view; `?category=` still selects a single category.
-The default view is all exceptions; `MATCHED`, `MATCHED_SPLIT`, `PARTIALLY_REFUNDED` and `REFUNDED`
-are reconciled and are not exceptions.
+(possible duplicate captures + duplicate orders), `orphans`, `refund_issues`, `chargebacks` (all
+four chargeback categories), `voided`, `fallback`, `invalid`, `all`. `?currency=AED` narrows any
+view; `?category=` still selects a single category.
+The default view is all exceptions; `MATCHED`, `MATCHED_SPLIT`, `PARTIALLY_REFUNDED`, `REFUNDED` and
+`CHARGEBACK_REVERSED` are reconciled and are not exceptions.
 
 ## Input handling
 
@@ -283,12 +341,25 @@ are reconciled and are not exceptions.
   frozen, auto-filter on.
 
 Columns: `category, reference, order_row, payment_row, payment_rows, order_amount, payment_amount,
-captured_amount, refunded_amount, voided_amount, net_amount, difference, order_currency,
-payment_currency, transaction_types, duplicate_payment_rows, order_date, payment_date, explanation`.
+captured_amount, refunded_amount, chargeback_amount, chargeback_reversed_amount, voided_amount,
+net_amount, difference, order_currency, payment_currency, transaction_types, duplicate_payment_rows,
+order_date, payment_date, explanation`.
 
 `payment_row` is the first contributing capture (kept for compatibility); `payment_rows` lists every
 contributing row, `;`-separated. `payment_amount` is the sum of captures — the single payment
 amount when there is one, as before.
+
+## Upgrading from 0.2
+
+- `CHARGEBACK` and `CHARGEBACK_REVERSAL` are now transaction types (with synonyms, see above).
+  Such rows were `INVALID_ROW` in 0.2; they are now grouped with their order.
+- New categories: `CHARGEBACK_REVERSED` (reconciled), `CHARGED_BACK`,
+  `CHARGEBACK_EXCEEDS_CAPTURE`, `REVERSAL_EXCEEDS_CHARGEBACK` (exceptions); new filter
+  `chargebacks`.
+- New columns: `chargeback_amount`, `chargeback_reversed_amount` (rows, after `refunded_amount`)
+  and `charged_back`, `chargeback_reversed` (financial summary, after `refunded`).
+- `net_amount` / `net_captured` now also subtract net chargebacks. Files without chargebacks
+  produce exactly the 0.2 numbers.
 
 ## Upgrading from 0.1
 
@@ -308,10 +379,10 @@ amount when there is one, as before.
 
 ```
 app/            FastAPI app, engine, loaders, exporters, Jinja2/HTMX templates, CLI
-tests/          pytest suite (engine rules, split/refund rules, normalisation, CSV edge cases,
-                exports, HTTP e2e, dataset)
-examples/       small hand-written pair (16 order rows) covering the main categories
-demo-data/      1006-order synthetic dataset with planted cases + expected.json + generator + verify.py
+tests/          pytest suite (engine rules, split/refund rules, chargebacks, normalisation,
+                CSV edge cases, exports, HTTP e2e, dataset)
+examples/       small hand-written pair (17 order rows) covering the main categories
+demo-data/      1010-order synthetic dataset with planted cases + expected.json + generator + verify.py
 Dockerfile, docker-compose.yml
 .github/workflows/ci.yml   ruff → pytest (3.11/3.12) → dataset checks (typed + legacy) →
                            docker build + container API smoke test with demo-data/verify.py
@@ -334,18 +405,22 @@ changes. If your checkout lacks them, the test suite generates them on first run
 
 - **Grouping is by reference only.** Payments are tied to an order solely through the exact
   reference. There is no link between a refund/void and the specific capture it reverses (no
-  `psp_transaction_id` / `original_transaction_id` matching), so a refund is attributed to the
-  order, not to a capture.
+  `psp_transaction_id` / `original_transaction_id` matching), so a refund or chargeback is
+  attributed to the order, not to a capture. A chargeback reversal is matched to the order's
+  chargebacks as a sum, not to a specific dispute.
+- **Chargebacks are a snapshot.** Disputes live for weeks; a `CHARGED_BACK` today may be reversed in
+  a later export. Reconcile the same period again once the dispute window has closed.
 - **Split vs. partial vs. mismatch is decided on sums.** One short payment is `AMOUNT_MISMATCH`, not
   `PARTIAL_PAYMENT`; several captures that overshoot without a repeated amount are
   `AMOUNT_MISMATCH`. Duplicate detection is a heuristic ("possible") based on equal amounts; it
   does not look at card, time of day or PSP ids.
-- **Transaction types are a closed list.** Chargebacks, authorisations, fees, payouts and
-  adjustments are not modelled; with the column mapped they become `INVALID_ROW`. Filter them out
-  or relabel them first. A void is assumed to be a separate cancelled transaction; if your PSP
-  exports a void *in addition to* the original capture row, that capture still counts.
-- **No transaction type → no refunds.** Without the column, refunds are read as (negative or
-  positive) captures and flagged, not netted. Map the column whenever the export mixes types.
+- **Transaction types are a closed list.** Authorisations, fees (including chargeback fees),
+  payouts and adjustments are not modelled; with the column mapped they become `INVALID_ROW`.
+  Filter them out or relabel them first. A void is assumed to be a separate cancelled transaction;
+  if your PSP exports a void *in addition to* the original capture row, that capture still counts.
+- **No transaction type → no refunds or chargebacks.** Without the column, refunds and
+  chargebacks are read as (negative or positive) captures and flagged, not netted. Map the column
+  whenever the export mixes types.
 - **Refunds are compared exactly** with captures (no tolerance); the amount tolerance is absolute,
   within one currency, applied to capture sums; there is no percentage mode.
 - **Exact reference match only.** Prefixed or truncated references (`ORD-1001` vs `1001`) are not
