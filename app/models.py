@@ -17,6 +17,8 @@ class Category(StrEnum):
     PARTIALLY_REFUNDED = "PARTIALLY_REFUNDED"
     # Captures tie out; everything captured was refunded (net 0).
     REFUNDED = "REFUNDED"
+    # Captures tie out; every chargeback on the order was reversed (merchant won).
+    CHARGEBACK_REVERSED = "CHARGEBACK_REVERSED"
     # --- exceptions ------------------------------------------------------------
     MISSING_PAYMENT = "MISSING_PAYMENT"
     ORPHAN_PAYMENT = "ORPHAN_PAYMENT"
@@ -28,6 +30,13 @@ class Category(StrEnum):
     POSSIBLE_DUPLICATE_CAPTURE = "POSSIBLE_DUPLICATE_CAPTURE"
     # More refunded than captured (including a refund with no capture at all).
     REFUND_EXCEEDS_CAPTURE = "REFUND_EXCEEDS_CAPTURE"
+    # Captures tie out, but money was charged back and not (fully) reversed.
+    CHARGED_BACK = "CHARGED_BACK"
+    # Refunded + net charged back > captured: money returned to the cardholder
+    # twice (refund AND chargeback), or a chargeback with nothing captured.
+    CHARGEBACK_EXCEEDS_CAPTURE = "CHARGEBACK_EXCEEDS_CAPTURE"
+    # More chargeback reversals than chargebacks (incl. a reversal with no chargeback).
+    REVERSAL_EXCEEDS_CHARGEBACK = "REVERSAL_EXCEEDS_CHARGEBACK"
     # The order only has VOID transactions: nothing was captured.
     VOIDED = "VOIDED"
     DUPLICATE_ORDER = "DUPLICATE_ORDER"
@@ -42,6 +51,7 @@ RECONCILED_CATEGORIES: tuple[Category, ...] = (
     Category.MATCHED_SPLIT,
     Category.PARTIALLY_REFUNDED,
     Category.REFUNDED,
+    Category.CHARGEBACK_REVERSED,
 )
 
 EXCEPTION_CATEGORIES: tuple[Category, ...] = tuple(
@@ -65,6 +75,15 @@ FILTER_GROUPS: dict[str, tuple[str, tuple[Category, ...]]] = {
     ),
     "orphans": ("Orphans", (Category.ORPHAN_PAYMENT,)),
     "refund_issues": ("Refund > capture", (Category.REFUND_EXCEEDS_CAPTURE,)),
+    "chargebacks": (
+        "Chargebacks",
+        (
+            Category.CHARGED_BACK,
+            Category.CHARGEBACK_REVERSED,
+            Category.CHARGEBACK_EXCEEDS_CAPTURE,
+            Category.REVERSAL_EXCEEDS_CHARGEBACK,
+        ),
+    ),
     "voided": ("Voided", (Category.VOIDED,)),
     "fallback": ("Fallback", (Category.FALLBACK_MATCHED,)),
     "invalid": ("Invalid rows", (Category.INVALID_ROW,)),
@@ -75,6 +94,10 @@ class TxnType(StrEnum):
     PAYMENT = "PAYMENT"
     REFUND = "REFUND"
     VOID = "VOID"
+    # Money taken back by the issuer on the cardholder's behalf (dispute lost / open).
+    CHARGEBACK = "CHARGEBACK"
+    # Chargeback money returned to the merchant (representment / dispute won).
+    CHARGEBACK_REVERSAL = "CHARGEBACK_REVERSAL"
 
 
 @dataclass(frozen=True)
@@ -156,6 +179,9 @@ class ResultRow:
     captured_amount: Decimal | None = None
     refunded_amount: Decimal | None = None
     voided_amount: Decimal | None = None
+    chargeback_amount: Decimal | None = None
+    chargeback_reversed_amount: Decimal | None = None
+    # captured − refunded − charged back + chargeback reversed
     net_amount: Decimal | None = None
     # e.g. "PAYMENT×2, REFUND"
     transaction_types: str = ""
@@ -173,6 +199,8 @@ class ResultRow:
             "payment_amount": _fmt(self.payment_amount),
             "captured_amount": _fmt(self.captured_amount),
             "refunded_amount": _fmt(self.refunded_amount),
+            "chargeback_amount": _fmt(self.chargeback_amount),
+            "chargeback_reversed_amount": _fmt(self.chargeback_reversed_amount),
             "voided_amount": _fmt(self.voided_amount),
             "net_amount": _fmt(self.net_amount),
             "difference": _fmt(self.difference),
@@ -195,12 +223,19 @@ class CurrencyTotals:
     orders_total: Decimal = Decimal("0")
     captured: Decimal = Decimal("0")
     refunded: Decimal = Decimal("0")
+    charged_back: Decimal = Decimal("0")
+    chargeback_reversed: Decimal = Decimal("0")
     voided: Decimal = Decimal("0")
     unreconciled: Decimal = Decimal("0")
 
     @property
+    def net_chargebacks(self) -> Decimal:
+        return self.charged_back - self.chargeback_reversed
+
+    @property
     def net_captured(self) -> Decimal:
-        return self.captured - self.refunded
+        """What the merchant keeps: captured − refunded − net chargebacks."""
+        return self.captured - self.refunded - self.net_chargebacks
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -209,6 +244,8 @@ class CurrencyTotals:
             "orders_total": _fmt(self.orders_total),
             "captured": _fmt(self.captured),
             "refunded": _fmt(self.refunded),
+            "charged_back": _fmt(self.charged_back),
+            "chargeback_reversed": _fmt(self.chargeback_reversed),
             "net_captured": _fmt(self.net_captured),
             "voided": _fmt(self.voided),
             "unreconciled": _fmt(self.unreconciled),

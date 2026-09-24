@@ -8,19 +8,25 @@ Rules (in order — see README "Matching rules" for the full table):
    every further row → ``DUPLICATE_ORDER``.
 3. All valid payment rows sharing a reference form one *payment group*
    (sorted by payment date, then row order). A group is split by type into
-   captures (PAYMENT), refunds (REFUND) and voids (VOID). Without a mapped
-   transaction-type column every row is a PAYMENT with its signed amount.
+   captures (PAYMENT), refunds (REFUND), voids (VOID), chargebacks
+   (CHARGEBACK) and chargeback reversals (CHARGEBACK_REVERSAL). Without a
+   mapped transaction-type column every row is a PAYMENT with its signed amount.
 4. Canonical order ↔ payment group by exact reference:
    - any payment currency ≠ order currency → ``CURRENCY_MISMATCH`` (never summed
      across currencies);
-   - no captures: only voids → ``VOIDED``; refunds → ``REFUND_EXCEEDS_CAPTURE``;
+   - reversed > charged back → ``REVERSAL_EXCEEDS_CHARGEBACK``;
+   - no captures: chargebacks → ``CHARGEBACK_EXCEEDS_CAPTURE``; refunds →
+     ``REFUND_EXCEEDS_CAPTURE``; only voids → ``VOIDED``;
    - refunded > captured → ``REFUND_EXCEEDS_CAPTURE``;
+   - refunded + net charged back > captured → ``CHARGEBACK_EXCEEDS_CAPTURE``;
    - one capture: equal (± tolerance) → ``MATCHED`` else ``AMOUNT_MISMATCH``;
    - several captures: sum equal → ``MATCHED_SPLIT``; sum short →
      ``PARTIAL_PAYMENT``; sum over and the surplus is explained by a repeated
      capture → ``POSSIBLE_DUPLICATE_CAPTURE``; otherwise ``AMOUNT_MISMATCH``;
-   - captures reconcile (MATCHED / MATCHED_SPLIT) and something was refunded →
-     ``REFUNDED`` (refunded == captured) or ``PARTIALLY_REFUNDED``.
+   - captures reconcile (MATCHED / MATCHED_SPLIT): net chargeback > 0 →
+     ``CHARGED_BACK``; chargebacks all reversed → ``CHARGEBACK_REVERSED``;
+     otherwise something refunded → ``REFUNDED`` (refunded == captured) or
+     ``PARTIALLY_REFUNDED``.
 5. Canonical order without payment group → ``MISSING_PAYMENT``; payment group
    without order → one ``ORPHAN_PAYMENT`` row listing all its source rows.
 6. Optional fallback (off by default): MISSING orders and single-capture ORPHAN
@@ -115,15 +121,24 @@ class _GroupMoney:
         self.captures = [r for r in records if r.txn_type is TxnType.PAYMENT]
         self.refunds = [r for r in records if r.txn_type is TxnType.REFUND]
         self.voids = [r for r in records if r.txn_type is TxnType.VOID]
+        self.chargebacks = [r for r in records if r.txn_type is TxnType.CHARGEBACK]
+        self.reversals = [r for r in records if r.txn_type is TxnType.CHARGEBACK_REVERSAL]
         # Untyped: every row is a PAYMENT with its *signed* amount (legacy behaviour).
         self.captured = sum((r.amount for r in self.captures), ZERO)  # type: ignore[misc]
         self.refunded = sum((r.magnitude for r in self.refunds), ZERO)
         self.voided = sum((r.magnitude for r in self.voids), ZERO)
+        self.charged_back = sum((r.magnitude for r in self.chargebacks), ZERO)
+        self.reversed = sum((r.magnitude for r in self.reversals), ZERO)
         self.typed = typed
 
     @property
+    def net_chargeback(self) -> Decimal:
+        """Charged back and not reversed (may be negative if reversals exceed)."""
+        return self.charged_back - self.reversed
+
+    @property
     def net(self) -> Decimal:
-        return self.captured - self.refunded
+        return self.captured - self.refunded - self.net_chargeback
 
     @property
     def refund_excess(self) -> Decimal:
@@ -132,8 +147,37 @@ class _GroupMoney:
             return ZERO
         return max(ZERO, self.refunded - self.captured)
 
+    @property
+    def credit_excess(self) -> Decimal:
+        """Money returned to the cardholder (refunds + open chargebacks) beyond captured.
+
+        Equals :attr:`refund_excess` when there are no chargebacks.
+        """
+        if not self.refunds and not self.chargebacks:
+            return ZERO
+        open_cb = max(ZERO, self.net_chargeback)
+        return max(ZERO, self.refunded + open_cb - self.captured)
+
+    @property
+    def reversal_excess(self) -> Decimal:
+        """Chargeback reversals beyond what was charged back."""
+        return max(ZERO, self.reversed - self.charged_back)
+
     def unreconciled_vs(self, order_amount: Decimal) -> Decimal:
-        return abs(self.captured - order_amount) + self.refund_excess
+        return abs(self.captured - order_amount) + self.credit_excess + self.reversal_excess
+
+
+def _reversal_note(m: _GroupMoney) -> str:
+    if not m.reversals:
+        return ""
+    return f"; chargeback reversed {_fmt(m.reversed)} in row(s) {_rows_txt(m.reversals)}"
+
+
+def _chargeback_note(m: _GroupMoney) -> str:
+    note = ""
+    if m.chargebacks:
+        note += f"; charged back {_fmt(m.charged_back)} in row(s) {_rows_txt(m.chargebacks)}"
+    return note + _reversal_note(m)
 
 
 def _group_row(
@@ -163,6 +207,8 @@ def _group_row(
         captured_amount=money.captured if money else None,
         refunded_amount=money.refunded if money and typed else None,
         voided_amount=money.voided if money and typed else None,
+        chargeback_amount=money.charged_back if money and typed else None,
+        chargeback_reversed_amount=money.reversed if money and typed else None,
         net_amount=money.net if money else None,
         difference=diff,
         order_currency=order.currency if order else "",
@@ -271,43 +317,82 @@ def _evaluate_group(
         else ""
     )
     refund_note = (
-        f"; refunded {_fmt(m.refunded)} in row(s) {_rows_txt(m.refunds)} → net {_fmt(m.net)}"
-        if m.refunds
-        else ""
+        f"; refunded {_fmt(m.refunded)} in row(s) {_rows_txt(m.refunds)}" if m.refunds else ""
     )
+    cb_note = _chargeback_note(m)
+    moved = m.refunds or m.chargebacks or m.reversals
+    # Appended to every explanation that does not already spell the movements out.
+    tail = refund_note + cb_note + (f" → net {_fmt(m.net)}" if moved else "")
+
+    def exception(category: Category, explanation: str) -> ResultRow:
+        unrec[order.currency] += m.unreconciled_vs(order.amount)
+        return _group_row(category, explanation, order, group, m)
+
+    # --- chargeback reversals without a matching chargeback ------------------
+    if m.reversal_excess > 0:
+        cb_txt = (
+            f"charged back {_fmt(m.charged_back)} (row(s) {_rows_txt(m.chargebacks)})"
+            if m.chargebacks
+            else "nothing was charged back"
+        )
+        return exception(
+            Category.REVERSAL_EXCEEDS_CHARGEBACK,
+            f"Chargeback reversal {_fmt(m.reversed)} (row(s) {_rows_txt(m.reversals)}) "
+            f"but {cb_txt} — {_fmt(m.reversal_excess)} reversed in excess{refund_note}"
+            f" → net {_fmt(m.net)}{void_note}",
+        )
 
     # --- nothing captured ----------------------------------------------------
     if not caps:
-        if not m.refunds:
-            unrec[order.currency] += abs(order.amount)
-            return _group_row(
-                Category.VOIDED,
-                f"Only VOID transactions (row(s) {_rows_txt(m.voids)}, {_fmt(m.voided)}): "
-                f"nothing captured against order {_fmt(order.amount)}",
-                order,
-                group,
-                m,
+        if m.chargebacks:
+            return exception(
+                Category.CHARGEBACK_EXCEEDS_CAPTURE,
+                f"Charged back {_fmt(m.charged_back)} (row(s) {_rows_txt(m.chargebacks)}) "
+                f"but nothing was captured against order {_fmt(order.amount)}"
+                f"{refund_note}{_reversal_note(m)} → net {_fmt(m.net)}{void_note}",
             )
-        unrec[order.currency] += m.unreconciled_vs(order.amount)
+        if m.refunds:
+            return exception(
+                Category.REFUND_EXCEEDS_CAPTURE,
+                f"Refunded {_fmt(m.refunded)} (row(s) {_rows_txt(m.refunds)}) but nothing was "
+                f"captured against order {_fmt(order.amount)}{void_note}",
+            )
+        unrec[order.currency] += abs(order.amount)
         return _group_row(
-            Category.REFUND_EXCEEDS_CAPTURE,
-            f"Refunded {_fmt(m.refunded)} (row(s) {_rows_txt(m.refunds)}) but nothing was "
-            f"captured against order {_fmt(order.amount)}{void_note}",
+            Category.VOIDED,
+            f"Only VOID transactions (row(s) {_rows_txt(m.voids)}, {_fmt(m.voided)}): "
+            f"nothing captured against order {_fmt(order.amount)}",
             order,
             group,
             m,
         )
 
     if m.refund_excess > 0:
-        unrec[order.currency] += m.unreconciled_vs(order.amount)
-        return _group_row(
+        return exception(
             Category.REFUND_EXCEEDS_CAPTURE,
             f"Refunded {_fmt(m.refunded)} (row(s) {_rows_txt(m.refunds)}) exceeds captured "
             f"{_fmt(m.captured)} (row(s) {_rows_txt(caps)}) by "
-            f"{_fmt(m.refunded - m.captured)}{void_note}",
-            order,
-            group,
-            m,
+            f"{_fmt(m.refunded - m.captured)}{cb_note}{void_note}",
+        )
+
+    if m.credit_excess > 0:
+        if m.refunds:
+            what = (
+                f"Refunded {_fmt(m.refunded)} (row(s) {_rows_txt(m.refunds)}) and charged back "
+                f"{_fmt(m.net_chargeback)}"
+            )
+            why = " — the cardholder got the money back twice (refund and chargeback)"
+            verb = "exceed"
+        else:
+            what = f"Charged back {_fmt(m.net_chargeback)}"
+            why, verb = "", "exceeds"
+        rows_cb = _rows_txt(m.chargebacks)
+        return exception(
+            Category.CHARGEBACK_EXCEEDS_CAPTURE,
+            f"{what} (chargeback row(s) {rows_cb}"
+            f"{', net of reversals' if m.reversals else ''}) {verb} captured "
+            f"{_fmt(m.captured)} (row(s) {_rows_txt(caps)}) by {_fmt(m.credit_excess)}{why}"
+            f" → net {_fmt(m.net)}{void_note}",
         )
 
     # --- captures vs order ----------------------------------------------------
@@ -358,8 +443,24 @@ def _evaluate_group(
                     f"no repeated capture explains the surplus"
                 )
 
-    # --- refunds on top of reconciled captures ---------------------------------
-    if category in (Category.MATCHED, Category.MATCHED_SPLIT) and m.refunded > 0:
+    # --- chargebacks / refunds on top of reconciled captures ------------------
+    reconciled_caps = category in (Category.MATCHED, Category.MATCHED_SPLIT)
+    if reconciled_caps and m.chargebacks:
+        how = "split " if category is Category.MATCHED_SPLIT else ""
+        if m.net_chargeback > 0:
+            category = Category.CHARGED_BACK
+            state = "partially reversed, " if m.reversals else ""
+            explanation = (
+                f"Captured {_fmt(m.captured)} ({how}row(s) {_rows_txt(caps)}) matches the "
+                f"order, but {_fmt(m.net_chargeback)} is charged back ({state}not recovered)"
+            )
+        else:
+            category = Category.CHARGEBACK_REVERSED
+            explanation = (
+                f"Captured {_fmt(m.captured)} ({how}row(s) {_rows_txt(caps)}) matches the "
+                f"order; every chargeback was reversed"
+            )
+    elif reconciled_caps and m.refunded > 0:
         how = "split " if category is Category.MATCHED_SPLIT else ""
         if m.refunded == m.captured:
             category = Category.REFUNDED
@@ -373,13 +474,14 @@ def _evaluate_group(
                 f"Captured {_fmt(m.captured)} ({how}row(s) {_rows_txt(caps)}), refunded "
                 f"{_fmt(m.refunded)} (row(s) {_rows_txt(m.refunds)}) → net {_fmt(m.net)}"
             )
-        refund_note = ""
+        tail = ""
 
     if category not in (
         Category.MATCHED,
         Category.MATCHED_SPLIT,
         Category.REFUNDED,
         Category.PARTIALLY_REFUNDED,
+        Category.CHARGEBACK_REVERSED,
     ):
         unrec[order.currency] += m.unreconciled_vs(order.amount)
         if not typed:
@@ -388,7 +490,7 @@ def _evaluate_group(
                 (abs(c.amount) for c in caps if c.amount is not None and c.amount < 0), ZERO
             )
     return _group_row(
-        category, explanation + refund_note + void_note, order, group, m, duplicates=duplicates
+        category, explanation + tail + void_note, order, group, m, duplicates=duplicates
     )
 
 
@@ -429,6 +531,10 @@ def _financials(
             t.captured += p.amount  # type: ignore[operator]
         elif p.txn_type is TxnType.REFUND:
             t.refunded += p.magnitude
+        elif p.txn_type is TxnType.CHARGEBACK:
+            t.charged_back += p.magnitude
+        elif p.txn_type is TxnType.CHARGEBACK_REVERSAL:
+            t.chargeback_reversed += p.magnitude
         else:
             t.voided += p.magnitude
     for c, v in unrec.items():
