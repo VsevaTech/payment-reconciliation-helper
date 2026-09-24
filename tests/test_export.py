@@ -97,7 +97,7 @@ def test_xlsx_financial_summary_never_mixes_currencies():
     wb = load_workbook(io.BytesIO(to_xlsx(_typed_result())))
     rows = list(wb["Summary"].iter_rows(values_only=True))
     header_at = next(i for i, r in enumerate(rows) if r[0] == "currency")
-    assert list(rows[header_at])[:8] == FINANCIAL_COLUMNS
+    assert list(rows[header_at])[: len(FINANCIAL_COLUMNS)] == FINANCIAL_COLUMNS
     fin = {r[0]: r for r in rows[header_at + 1 :] if r[0]}
     assert set(fin) == {"AED", "USD"}
     col = FINANCIAL_COLUMNS.index
