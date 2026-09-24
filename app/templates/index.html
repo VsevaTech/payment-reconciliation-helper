@@ -24,9 +24,9 @@
     <li>Upload <code>orders.csv</code> and <code>payments.csv</code>.</li>
     <li>Map <code>Order ID → merchant_reference</code>, <code>Amount → amount</code>,
         <code>Currency → currency</code>, <code>Date → payment_date</code> and, optionally,
-        the payments <code>transaction_type</code> (PAYMENT / REFUND / VOID) — suggested automatically.</li>
+        the payments <code>transaction_type</code> (PAYMENT / REFUND / VOID / CHARGEBACK / CHARGEBACK_REVERSAL) — suggested automatically.</li>
     <li>Run reconciliation: all payments per reference are grouped and compared with the order —
-        split and partial payments, refunds, voids and possible duplicate captures are told apart.</li>
+        split and partial payments, refunds, voids, chargebacks and possible duplicate captures are told apart.</li>
     <li>Review the per-currency financial summary and filter the results; export CSV or XLSX.</li>
   </ol>
 </div>

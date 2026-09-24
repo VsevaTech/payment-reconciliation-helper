@@ -5,7 +5,7 @@
 <table>
   <thead><tr>
     <th>Category</th><th>Reference</th><th class="num">Order row</th><th class="num">Payment rows</th><th>Types</th>
-    <th class="num">Order amount</th><th class="num">Captured</th><th class="num">Refunded</th><th class="num">Net</th><th class="num">Diff</th>
+    <th class="num">Order amount</th><th class="num">Captured</th><th class="num">Refunded</th><th class="num">Charged back</th><th class="num">CB reversed</th><th class="num">Net</th><th class="num">Diff</th>
     <th>Ccy</th><th>Order date</th><th>Payment date</th><th>Explanation</th>
   </tr></thead>
   <tbody>
@@ -19,6 +19,8 @@
     <td class="num">{{ r.order_amount | money }}</td>
     <td class="num">{{ r.captured_amount | money }}</td>
     <td class="num">{{ r.refunded_amount | money }}</td>
+    <td class="num">{{ r.chargeback_amount | money }}</td>
+    <td class="num">{{ r.chargeback_reversed_amount | money }}</td>
     <td class="num">{{ r.net_amount | money }}</td>
     <td class="num">{{ r.difference | money(signed=true) }}</td>
     <td>{{ r.order_currency }}{% if r.payment_currency and r.payment_currency != r.order_currency %}{% if r.order_currency %} → {% endif %}{{ r.payment_currency }}{% endif %}</td>
