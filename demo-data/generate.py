@@ -2,8 +2,9 @@
 
 Produces ``orders.csv`` (UTF-8, comma, ISO dates, amounts like ``1234.50``),
 ``payments.csv`` (UTF-8, semicolon, CRLF, PSP-style columns incl. a
-``transaction_type`` column, shuffled rows) and ``expected.json`` with the exact
-category counts and per-currency money totals the engine must report.
+``transaction_type`` column with refunds, voids and chargebacks, shuffled rows) and
+``expected.json`` with the exact category counts and per-currency money totals the engine
+must report.
 
 The expectations are derived here from what was planted — independently of the
 engine — so the tests compare two separate computations.
@@ -43,6 +44,10 @@ SHOWCASE = {
     "ORD-2024-01004": "PARTIALLY_REFUNDED",  # 100 capture, 30 refund
     "ORD-2024-01005": "REFUNDED",  # 100 capture, 100 refund
     "ORD-2024-01006": "POSSIBLE_DUPLICATE_CAPTURE",  # 100 + 100
+    "ORD-2024-01007": "CHARGED_BACK",  # 100 capture, 100 chargeback
+    "ORD-2024-01008": "CHARGEBACK_REVERSED",  # 100 capture, 100 chargeback, 100 reversal
+    "ORD-2024-01009": "CHARGEBACK_EXCEEDS_CAPTURE",  # 100 capture, 100 refund, 100 chargeback
+    "ORD-2024-01010": "REVERSAL_EXCEEDS_CHARGEBACK",  # 100 capture, 100 reversal, no chargeback
 }
 ORPHAN_REFUND_REF = "ORD-2024-95000"
 
@@ -150,6 +155,8 @@ def main() -> None:
                     "orders_total",
                     "captured",
                     "refunded",
+                    "charged_back",
+                    "chargeback_reversed",
                     "voided",
                     "unreconciled",
                 )
@@ -167,20 +174,32 @@ def main() -> None:
         nonlocal txn
         txn += rng.randint(1, 9)
         d = date.fromisoformat(o["Date"]) + timedelta(days=day_shift)
-        signed = -amount if kind == "REFUND" else amount
-        if kind == "CAPTURE":
-            acc(currency, "captured", amount)
-        elif kind == "REFUND":
-            acc(currency, "refunded", amount)
-        else:
-            acc(currency, "voided", amount)
+        # PSP portals export money leaving the merchant as negative amounts.
+        signed = -amount if kind in ("REFUND", "CHARGEBACK") else amount
+        acc(
+            currency,
+            {
+                "CAPTURE": "captured",
+                "REFUND": "refunded",
+                "VOID": "voided",
+                "CHARGEBACK": "charged_back",
+                "CHARGEBACK_REVERSAL": "chargeback_reversed",
+            }[kind],
+            amount,
+        )
         return {
             "psp_transaction_id": f"TXN{txn}",
             "merchant_reference": o["Order ID"],
             "amount": format(signed, "f"),
             "currency": currency,
             "payment_date": d.isoformat(),
-            "status": {"CAPTURE": "CAPTURED", "REFUND": "REFUNDED", "VOID": "VOIDED"}[kind],
+            "status": {
+                "CAPTURE": "CAPTURED",
+                "REFUND": "REFUNDED",
+                "VOID": "VOIDED",
+                "CHARGEBACK": "CHARGEBACK",
+                "CHARGEBACK_REVERSAL": "CHARGEBACK_REVERSED",
+            }[kind],
             "transaction_type": kind,
             "card_brand": rng.choice(CARD_BRANDS),
             "merchant_name": rng.choice(CUSTOMERS),
@@ -243,6 +262,7 @@ def main() -> None:
     show = {ref: orders[by_ref[ref]] for ref in SHOWCASE}
     acc("AED", "orders_total", h * len(SHOWCASE))
     acc("AED", "orders_count", Decimal(len(SHOWCASE)))
+    # (the chargeback showcase payments are generated after the shuffle, see below)
     payments.append(psp_row(show["ORD-2024-01001"], h, "AED"))
     payments.append(psp_row(show["ORD-2024-01002"], Decimal("60.00"), "AED"))
     payments.append(psp_row(show["ORD-2024-01002"], Decimal("40.00"), "AED", 1))
@@ -256,28 +276,28 @@ def main() -> None:
     payments.append(psp_row(show["ORD-2024-01006"], h, "AED"))
     payments.append(psp_row(show["ORD-2024-01006"], h, "AED", 0))
     acc("AED", "unreconciled", h)
+
+    def ex(captured, net, diff="0.00", refunded="0", cb="0", rev="0"):
+        return {
+            "captured": captured,
+            "refunded": refunded,
+            "chargeback": cb,
+            "chargeback_reversed": rev,
+            "net": net,
+            "diff": diff,
+        }
+
     showcase_expect = {
-        "ORD-2024-01001": {"captured": "100.00", "refunded": "0", "net": "100.00", "diff": "0.00"},
-        "ORD-2024-01002": {"captured": "100.00", "refunded": "0", "net": "100.00", "diff": "0.00"},
-        "ORD-2024-01003": {"captured": "95.00", "refunded": "0", "net": "95.00", "diff": "-5.00"},
-        "ORD-2024-01004": {
-            "captured": "100.00",
-            "refunded": "30.00",
-            "net": "70.00",
-            "diff": "0.00",
-        },
-        "ORD-2024-01005": {
-            "captured": "100.00",
-            "refunded": "100.00",
-            "net": "0.00",
-            "diff": "0.00",
-        },
-        "ORD-2024-01006": {
-            "captured": "200.00",
-            "refunded": "0",
-            "net": "200.00",
-            "diff": "100.00",
-        },
+        "ORD-2024-01001": ex("100.00", "100.00"),
+        "ORD-2024-01002": ex("100.00", "100.00"),
+        "ORD-2024-01003": ex("95.00", "95.00", diff="-5.00"),
+        "ORD-2024-01004": ex("100.00", "70.00", refunded="30.00"),
+        "ORD-2024-01005": ex("100.00", "0.00", refunded="100.00"),
+        "ORD-2024-01006": ex("200.00", "200.00", diff="100.00"),
+        "ORD-2024-01007": ex("100.00", "0.00", cb="100.00"),
+        "ORD-2024-01008": ex("100.00", "100.00", cb="100.00", rev="100.00"),
+        "ORD-2024-01009": ex("100.00", "-100.00", refunded="100.00", cb="100.00"),
+        "ORD-2024-01010": ex("100.00", "200.00", rev="100.00"),
     }
 
     for k in range(N_ORPHANS):
@@ -297,6 +317,26 @@ def main() -> None:
 
     rng.shuffle(payments)
 
+    # Chargeback showcase (added in 0.3). Generated after the shuffle and inserted
+    # at seeded positions, so every earlier random draw — and the relative order of
+    # all 0.2 rows — is unchanged and the dataset diff stays reviewable.
+    chargeback_rows: list[dict[str, str]] = []
+    chargeback_rows.append(psp_row(show["ORD-2024-01007"], h, "AED"))
+    chargeback_rows.append(psp_row(show["ORD-2024-01007"], h, "AED", 30, "CHARGEBACK"))
+    chargeback_rows.append(psp_row(show["ORD-2024-01008"], h, "AED"))
+    chargeback_rows.append(psp_row(show["ORD-2024-01008"], h, "AED", 25, "CHARGEBACK"))
+    chargeback_rows.append(psp_row(show["ORD-2024-01008"], h, "AED", 50, "CHARGEBACK_REVERSAL"))
+    chargeback_rows.append(psp_row(show["ORD-2024-01009"], h, "AED"))
+    chargeback_rows.append(psp_row(show["ORD-2024-01009"], h, "AED", 3, "REFUND"))
+    chargeback_rows.append(psp_row(show["ORD-2024-01009"], h, "AED", 28, "CHARGEBACK"))
+    acc("AED", "unreconciled", h)  # the cardholder got 100.00 back twice
+    chargeback_rows.append(psp_row(show["ORD-2024-01010"], h, "AED"))
+    chargeback_rows.append(psp_row(show["ORD-2024-01010"], h, "AED", 40, "CHARGEBACK_REVERSAL"))
+    acc("AED", "unreconciled", h)  # reversal of a chargeback that never happened
+
+    for row in chargeback_rows:
+        payments.insert(rng.randint(0, len(payments)), row)
+
     orders_buf = io.StringIO()
     w = csv.DictWriter(orders_buf, fieldnames=list(orders[0].keys()), lineterminator="\n")
     w.writeheader()
@@ -313,7 +353,8 @@ def main() -> None:
     # text-safe in git; cp1252 / UTF-16 handling is covered by tests/test_csv_loader.py.
     (OUT / "payments.csv").write_bytes(pay_buf.getvalue().encode("utf-8"))
 
-    showcase_counts = {c: list(SHOWCASE.values()).count(c) for c in set(SHOWCASE.values())}
+    sc = list(SHOWCASE.values())
+    showcase_counts = {c: sc.count(c) for c in set(sc)}
     random_special = (
         N_MISSING
         + N_AMOUNT_MISMATCH
@@ -330,6 +371,7 @@ def main() -> None:
         "MATCHED_SPLIT": N_SPLIT + showcase_counts["MATCHED_SPLIT"],
         "PARTIALLY_REFUNDED": N_PARTIAL_REFUND + showcase_counts["PARTIALLY_REFUNDED"],
         "REFUNDED": N_FULL_REFUND + showcase_counts["REFUNDED"],
+        "CHARGEBACK_REVERSED": showcase_counts["CHARGEBACK_REVERSED"],
         "MISSING_PAYMENT": N_MISSING,
         "ORPHAN_PAYMENT": N_ORPHANS + 1,
         "AMOUNT_MISMATCH": N_AMOUNT_MISMATCH,
@@ -338,6 +380,9 @@ def main() -> None:
         "POSSIBLE_DUPLICATE_CAPTURE": N_DUP_PAYMENTS
         + showcase_counts["POSSIBLE_DUPLICATE_CAPTURE"],
         "REFUND_EXCEEDS_CAPTURE": 0,
+        "CHARGED_BACK": showcase_counts["CHARGED_BACK"],
+        "CHARGEBACK_EXCEEDS_CAPTURE": showcase_counts["CHARGEBACK_EXCEEDS_CAPTURE"],
+        "REVERSAL_EXCEEDS_CHARGEBACK": showcase_counts["REVERSAL_EXCEEDS_CHARGEBACK"],
         "VOIDED": N_VOIDED,
         "DUPLICATE_ORDER": N_DUP_ORDERS,
         "FALLBACK_MATCHED": 0,
@@ -351,6 +396,13 @@ def main() -> None:
     untyped["MATCHED"] += N_VOIDED
     untyped["AMOUNT_MISMATCH"] += refund_groups
     untyped["PARTIALLY_REFUNDED"] = untyped["REFUNDED"] = untyped["VOIDED"] = 0
+    # Chargebacks are negative too → AMOUNT_MISMATCH; a lone reversal (+100 on a
+    # 100 capture) looks like a second capture → POSSIBLE_DUPLICATE_CAPTURE.
+    chargeback_negative = ("CHARGED_BACK", "CHARGEBACK_REVERSED", "CHARGEBACK_EXCEEDS_CAPTURE")
+    untyped["AMOUNT_MISMATCH"] += sum(summary[c] for c in chargeback_negative)
+    untyped["POSSIBLE_DUPLICATE_CAPTURE"] += summary["REVERSAL_EXCEEDS_CHARGEBACK"]
+    for c in (*chargeback_negative, "REVERSAL_EXCEEDS_CHARGEBACK"):
+        untyped[c] = 0
 
     def refs(indices: set[int] | list[int]) -> list[str]:
         return sorted(orders[i]["Order ID"] for i in indices)
@@ -370,7 +422,12 @@ def main() -> None:
                 "orders_total": format(v["orders_total"], "f"),
                 "captured": format(v["captured"], "f"),
                 "refunded": format(v["refunded"], "f"),
-                "net_captured": format(v["captured"] - v["refunded"], "f"),
+                "charged_back": format(v["charged_back"], "f"),
+                "chargeback_reversed": format(v["chargeback_reversed"], "f"),
+                "net_captured": format(
+                    v["captured"] - v["refunded"] - v["charged_back"] + v["chargeback_reversed"],
+                    "f",
+                ),
                 "voided": format(v["voided"], "f"),
                 "unreconciled": format(v["unreconciled"], "f"),
             }
@@ -389,6 +446,10 @@ def main() -> None:
             "partially_refunded": sorted(refs(partial_refund) + showcase("PARTIALLY_REFUNDED")),
             "refunded": sorted(refs(full_refund) + showcase("REFUNDED")),
             "voided": refs(voided),
+            "charged_back": showcase("CHARGED_BACK"),
+            "chargeback_reversed": showcase("CHARGEBACK_REVERSED"),
+            "chargeback_exceeds_capture": showcase("CHARGEBACK_EXCEEDS_CAPTURE"),
+            "reversal_exceeds_chargeback": showcase("REVERSAL_EXCEEDS_CHARGEBACK"),
             "orphan_payment": sorted(
                 p["merchant_reference"]
                 for p in payments

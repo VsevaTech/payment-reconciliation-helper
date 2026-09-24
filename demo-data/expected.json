@@ -1,11 +1,12 @@
 {
-  "orders_rows": 1008,
-  "payments_rows": 1025,
+  "orders_rows": 1012,
+  "payments_rows": 1035,
   "summary": {
     "MATCHED": 976,
     "MATCHED_SPLIT": 5,
     "PARTIALLY_REFUNDED": 4,
     "REFUNDED": 3,
+    "CHARGEBACK_REVERSED": 1,
     "MISSING_PAYMENT": 6,
     "ORPHAN_PAYMENT": 6,
     "AMOUNT_MISMATCH": 3,
@@ -13,6 +14,9 @@
     "CURRENCY_MISMATCH": 2,
     "POSSIBLE_DUPLICATE_CAPTURE": 3,
     "REFUND_EXCEEDS_CAPTURE": 0,
+    "CHARGED_BACK": 1,
+    "CHARGEBACK_EXCEEDS_CAPTURE": 1,
+    "REVERSAL_EXCEEDS_CHARGEBACK": 1,
     "VOIDED": 1,
     "DUPLICATE_ORDER": 2,
     "FALLBACK_MATCHED": 0,
@@ -23,13 +27,17 @@
     "MATCHED_SPLIT": 5,
     "PARTIALLY_REFUNDED": 0,
     "REFUNDED": 0,
+    "CHARGEBACK_REVERSED": 0,
     "MISSING_PAYMENT": 6,
     "ORPHAN_PAYMENT": 6,
-    "AMOUNT_MISMATCH": 10,
+    "AMOUNT_MISMATCH": 13,
     "PARTIAL_PAYMENT": 3,
     "CURRENCY_MISMATCH": 2,
-    "POSSIBLE_DUPLICATE_CAPTURE": 3,
+    "POSSIBLE_DUPLICATE_CAPTURE": 4,
     "REFUND_EXCEEDS_CAPTURE": 0,
+    "CHARGED_BACK": 0,
+    "CHARGEBACK_EXCEEDS_CAPTURE": 0,
+    "REVERSAL_EXCEEDS_CHARGEBACK": 0,
     "VOIDED": 0,
     "DUPLICATE_ORDER": 2,
     "FALLBACK_MATCHED": 0,
@@ -38,13 +46,15 @@
   "financials": [
     {
       "currency": "AED",
-      "orders_count": 718,
-      "orders_total": "2431145.12",
-      "captured": "2420132.52",
-      "refunded": "1045.62",
-      "net_captured": "2419086.90",
+      "orders_count": 722,
+      "orders_total": "2431545.12",
+      "captured": "2420532.52",
+      "refunded": "1145.62",
+      "charged_back": "300.00",
+      "chargeback_reversed": "200.00",
+      "net_captured": "2419286.90",
       "voided": "28.05",
-      "unreconciled": "42636.30"
+      "unreconciled": "42836.30"
     },
     {
       "currency": "EUR",
@@ -52,6 +62,8 @@
       "orders_total": "131999.15",
       "captured": "131998.15",
       "refunded": "0",
+      "charged_back": "0",
+      "chargeback_reversed": "0",
       "net_captured": "131998.15",
       "voided": "0",
       "unreconciled": "1.00"
@@ -62,6 +74,8 @@
       "orders_total": "372431.56",
       "captured": "374161.56",
       "refunded": "0",
+      "charged_back": "0",
+      "chargeback_reversed": "0",
       "net_captured": "374161.56",
       "voided": "0",
       "unreconciled": "1730"
@@ -72,6 +86,8 @@
       "orders_total": "481878.06",
       "captured": "482026.57",
       "refunded": "4133.72",
+      "charged_back": "0",
+      "chargeback_reversed": "0",
       "net_captured": "477892.85",
       "voided": "0",
       "unreconciled": "10471.01"
@@ -130,6 +146,18 @@
     "voided": [
       "ORD-2024-00499"
     ],
+    "charged_back": [
+      "ORD-2024-01007"
+    ],
+    "chargeback_reversed": [
+      "ORD-2024-01008"
+    ],
+    "chargeback_exceeds_capture": [
+      "ORD-2024-01009"
+    ],
+    "reversal_exceeds_chargeback": [
+      "ORD-2024-01010"
+    ],
     "orphan_payment": [
       "ORD-2024-90000",
       "ORD-2024-90001",
@@ -144,6 +172,8 @@
       "category": "MATCHED",
       "captured": "100.00",
       "refunded": "0",
+      "chargeback": "0",
+      "chargeback_reversed": "0",
       "net": "100.00",
       "diff": "0.00"
     },
@@ -151,6 +181,8 @@
       "category": "MATCHED_SPLIT",
       "captured": "100.00",
       "refunded": "0",
+      "chargeback": "0",
+      "chargeback_reversed": "0",
       "net": "100.00",
       "diff": "0.00"
     },
@@ -158,6 +190,8 @@
       "category": "PARTIAL_PAYMENT",
       "captured": "95.00",
       "refunded": "0",
+      "chargeback": "0",
+      "chargeback_reversed": "0",
       "net": "95.00",
       "diff": "-5.00"
     },
@@ -165,6 +199,8 @@
       "category": "PARTIALLY_REFUNDED",
       "captured": "100.00",
       "refunded": "30.00",
+      "chargeback": "0",
+      "chargeback_reversed": "0",
       "net": "70.00",
       "diff": "0.00"
     },
@@ -172,6 +208,8 @@
       "category": "REFUNDED",
       "captured": "100.00",
       "refunded": "100.00",
+      "chargeback": "0",
+      "chargeback_reversed": "0",
       "net": "0.00",
       "diff": "0.00"
     },
@@ -179,8 +217,46 @@
       "category": "POSSIBLE_DUPLICATE_CAPTURE",
       "captured": "200.00",
       "refunded": "0",
+      "chargeback": "0",
+      "chargeback_reversed": "0",
       "net": "200.00",
       "diff": "100.00"
+    },
+    "ORD-2024-01007": {
+      "category": "CHARGED_BACK",
+      "captured": "100.00",
+      "refunded": "0",
+      "chargeback": "100.00",
+      "chargeback_reversed": "0",
+      "net": "0.00",
+      "diff": "0.00"
+    },
+    "ORD-2024-01008": {
+      "category": "CHARGEBACK_REVERSED",
+      "captured": "100.00",
+      "refunded": "0",
+      "chargeback": "100.00",
+      "chargeback_reversed": "100.00",
+      "net": "100.00",
+      "diff": "0.00"
+    },
+    "ORD-2024-01009": {
+      "category": "CHARGEBACK_EXCEEDS_CAPTURE",
+      "captured": "100.00",
+      "refunded": "100.00",
+      "chargeback": "100.00",
+      "chargeback_reversed": "0",
+      "net": "-100.00",
+      "diff": "0.00"
+    },
+    "ORD-2024-01010": {
+      "category": "REVERSAL_EXCEEDS_CHARGEBACK",
+      "captured": "100.00",
+      "refunded": "0",
+      "chargeback": "0",
+      "chargeback_reversed": "100.00",
+      "net": "200.00",
+      "diff": "0.00"
     }
   },
   "orders_mapping": {
